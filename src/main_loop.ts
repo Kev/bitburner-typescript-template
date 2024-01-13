@@ -11,9 +11,10 @@ function string_in(s: string, a: Array<string>) {
 
 export async function main(ns: NS): Promise<void> {
     ns.disableLog('ALL');
+    let first_loop = true;
     for (;;) {
         ns.print("Spread start");
-        const hack_script = 'hackloop.script';
+        const hack_script = 'hackloop.js';
         const scripts: Array<string> = [hack_script, 'just_hack.js', 'just_weaken.js', 'just_grow.js'];
 
         const to_scan: Array<string> = ['home'];
@@ -93,24 +94,29 @@ export async function main(ns: NS): Promise<void> {
 
         const kill: boolean = ns.args.length > 0 && string_in('kill', ns.args.map(String));
         const no_run: boolean = ns.args.length > 0 && string_in('kill', ns.args.map(String));
+        const kill_hacked: boolean = ns.args.length > 0 && string_in('kill_hacked', ns.args.map(String));
 
         for (const server of rooted) {
             ns.print("Starting scripts on ", server);
-            if (kill) {
+            const is_mine: boolean = server == 'home' || server.startsWith('wondersheep');
+            if (first_loop && (kill || (!is_mine && kill_hacked))) {
                 ns.print("Killing ", server);
                 await ns.killall(server);
             }
+            first_loop = false;
             if (no_run) {
                 ns.print("Not running scripts");
                 continue;
             }
+
             const script_mem : number = ns.getScriptRam(hack_script, server);
             const server_mem : number = ns.getServerMaxRam(server);
             const saved : number = server == "home" ? 10000 : 0;
             for (const multiple of [400, 200, 100, 50, 20, 10, 5, 2, 1]) {
                 while (server_mem - ns.getServerUsedRam(server) - saved> script_mem * multiple) {
                     ns.print("Remaining mem = ", server_mem - ns.getServerUsedRam(server), " script mem = ", script_mem, ", so running another copy at t=", multiple);
-                    ns.exec(hack_script, server, multiple, highest_value_host);
+                    // For my servers, hack what I think is best, but for hacked servers they can hack themselves - should ensure a small trickle of income even when my servers are doing stupid things and overGHing the target.
+                    ns.exec(hack_script, server, multiple, is_mine ? highest_value_host : server);
                     await ns.sleep(1000); // This sleep means that all the scripts start at staggered times, and across hundreds (thousands?) of scripts, that's going to reduce the number of times that they run redundant grow/weaken cycles at the same time. I hope.
                 }
             }
