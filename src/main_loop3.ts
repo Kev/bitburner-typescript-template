@@ -162,7 +162,7 @@ export async function main(ns: NS): Promise<void> {
     await prepare_server(ns, network);
     print_state(ns, network);
 
-    const hack_percentage = 0.5;
+    const hack_percentage = 0.3;
     const hack_amount = ns.getServerMaxMoney(network.target) * hack_percentage;
     const full_hack_threads = Math.floor(ns.hackAnalyzeThreads(network.target, hack_amount));
     const hack_security_increase = ns.hackAnalyzeSecurity(full_hack_threads, network.target);
@@ -173,7 +173,8 @@ export async function main(ns: NS): Promise<void> {
     await wait_for(ns, hack_security_pids);
     ns.print("After executing initial hack threads, security is ", ns.getServerSecurityLevel(network.target), " and money is ", ns.getServerMoneyAvailable(network.target));
 
-    const full_grow_threads = Math.ceil(ns.growthAnalyze(network.target, 1 / hack_percentage)) + 1; // Just adding 1 in case of float rounding errors
+    const grow_multiplier = 1 / (1 - hack_percentage);
+    const full_grow_threads = Math.ceil(ns.growthAnalyze(network.target, grow_multiplier)) + 1; // Just adding 1 in case of float rounding errors
     const grow_security_increase = ns.growthAnalyzeSecurity(full_grow_threads, network.target);
     const full_grow_weaken_threads = Math.ceil(grow_security_increase / 0.05) + 1; // +1 in case of float rounding errors
     const grow_pids = await farm_out(ns, network, 'grow_once.js', full_grow_threads, network.target);
@@ -182,9 +183,9 @@ export async function main(ns: NS): Promise<void> {
     await wait_for(ns, grow_security_pids);
     ns.print("After executing initial grow threads, security is ", ns.getServerSecurityLevel(network.target), " and money is ", ns.getServerMoneyAvailable(network.target));
 
+    ns.print("Using hack proportion of ", hack_percentage, " and growth multiplier of ", grow_multiplier)
 
 
-    ns.print("Starting loop hack with threads: H", full_hack_threads, " W", full_hack_weaken_threads, " G", full_grow_threads, " W", full_grow_weaken_threads, " against ", network.target);
     class ServerCalcs {
         name = '';
         server!: Server;
@@ -195,6 +196,11 @@ export async function main(ns: NS): Promise<void> {
         hack_delay!: number;
         grow_delay!: number;
     }
+    const grow_time = ns.getGrowTime(network.target);
+    const hack_time = ns.getHackTime(network.target);
+    const weaken_time = ns.getWeakenTime(network.target);
+    ns.print("Grow time = ", grow_time, ", hack time = ", hack_time, ", weaken time = ", weaken_time);
+    ns.print("Starting loop hack with threads: H", full_hack_threads, " W", full_hack_weaken_threads, " G", full_grow_threads, " W", full_grow_weaken_threads, " against ", network.target);
     for (; ;) {
         for (const server of ns.getPurchasedServers()) {
             const ram = ns.getServerMaxRam(server);
@@ -214,9 +220,6 @@ export async function main(ns: NS): Promise<void> {
         network.server_objects.clear(); // Clear the cache of server objects, so we get fresh data
         for (const server of network.rooted) {
             const server_object = get_server(ns, network, server);
-            const grow_time = ns.getGrowTime(network.target);
-            const hack_time = ns.getHackTime(network.target);
-            const weaken_time = ns.getWeakenTime(network.target);
             const needed_ram = ns.getScriptRam('hack_once.js', server) * full_hack_threads + ns.getScriptRam('weaken_once.js', server) * (full_hack_weaken_threads + full_grow_weaken_threads) + ns.getScriptRam('grow_once.js', server) * full_grow_threads;
             server_calcs.push({
                 name: server,
@@ -248,9 +251,9 @@ export async function main(ns: NS): Promise<void> {
                     // Else There wasn't enough RAM to run even the smallest possible batch, skip
                     // ns.print("    Using server ", server, " with threads: H", hack_threads, " W", hack_weaken_threads, " G", grow_threads, " W", grow_weaken_threads);
                     await ns.exec('hack_once.js', server.name, hack_threads, network.target, server.hack_delay);
-                    await ns.exec('weaken_once.js', server.name, hack_weaken_threads, network.target, 1);
-                    await ns.exec('grow_once.js', server.name, grow_threads, network.target, server.grow_delay + 2);
-                    await ns.exec('weaken_once.js', server.name, grow_weaken_threads, network.target, 3);
+                    await ns.exec('weaken_once.js', server.name, hack_weaken_threads, network.target);
+                    await ns.exec('grow_once.js', server.name, grow_threads, network.target, server.grow_delay);
+                    await ns.exec('weaken_once.js', server.name, grow_weaken_threads, network.target);
                     await ns.sleep(1);
                 }
                 await ns.sleep(0);

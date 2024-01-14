@@ -8,6 +8,6 @@ export async function main(ns: NS): Promise<void> {
             ns.print(server, ": Security: ", ns.formatNumber(ns.getServerSecurityLevel(server)), "/", ns.formatNumber(ns.getServerMinSecurityLevel(server)), "  Money: ", ns.formatNumber(ns.getServerMoneyAvailable(server)), "/", ns.formatNumber(ns.getServerMaxMoney(server)));
         }
 
-        await ns.sleep(10000);
+        await ns.sleep(2000);
     }
 }
