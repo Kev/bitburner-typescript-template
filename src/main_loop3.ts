@@ -258,8 +258,8 @@ export async function main(ns: NS): Promise<void> {
                     // ns.print("    Using server ", server, " with threads: H", hack_threads, " W", hack_weaken_threads, " G", grow_threads, " W", grow_weaken_threads);
                     await ns.exec('hack_once.js', server.name, hack_threads, network.target, server.hack_delay);
                     await ns.exec('weaken_once.js', server.name, hack_weaken_threads, network.target);
-                    await ns.exec('grow_once.js', server.name, grow_threads, network.target, server.grow_delay + 1);
-                    await ns.exec('weaken_once.js', server.name, grow_weaken_threads, network.target, 2);
+                    await ns.exec('grow_once.js', server.name, grow_threads, network.target, server.grow_delay + 2);
+                    await ns.exec('weaken_once.js', server.name, grow_weaken_threads, network.target, 3);
                     await ns.sleep(5);
                 }
                 await ns.sleep(0);
