@@ -115,7 +115,9 @@ function print_state(ns: NS, network: MyNetwork) {
 
 export async function main(ns: NS): Promise<void> {
     ns.disableLog('ALL');
-
+    ns.print("Firing off a buy loop to run until I've got a full set of servers at 256GB");
+    // Although later my loop will continually upgrade servers as a small proportion of my cash, until I'm at a base level I want to shovel all my cash into them
+    ns.run('buy_loop.js', 1, 256);
     const network = await find_network(ns);
     ns.print("Server to target: ", network.target);
     print_state(ns, network);
@@ -148,6 +150,19 @@ export async function main(ns: NS): Promise<void> {
     let did_something = true;
     for (; ;) {
         if (did_something) print_state(ns, network);
+        for (const server of ns.getPurchasedServers()) {
+            const ram = ns.getServerMaxRam(server);
+            if (ram >= ns.getPurchasedServerMaxRam()) {
+                continue;
+            }
+            const cash = ns.getServerMoneyAvailable('home');
+            const cost = ns.getPurchasedServerUpgradeCost(server, ram * 2);
+            if (cost < cash * 0.1) {
+                // Buy an upgrade if it's a small proportion of my total cash
+                ns.print("Upgrading ", server, " from ", ns.formatRam(ram), " to ", ns.formatRam(ram * 2), " for ", ns.formatNumber(cost));
+                ns.upgradePurchasedServer(server, ram * 2);
+            }
+        }
         did_something = false;
         const rooted = [...network.rooted];
         while (rooted.length > 0) {

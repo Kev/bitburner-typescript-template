@@ -36,12 +36,13 @@ export async function main(ns : NS) : Promise<void> {
             const upgrade_cost = ns.getPurchasedServerUpgradeCost(server, current_ram * 2);
             // ns.print("Considering ", server, " for upgrade. Current RAM = ", current_ram, ", max = ", max_ram, " upgrade cost ", upgrade_cost);
             if (current_ram >= desired_ram) {
-                ns.print(server, " already at ", desired_ram, "(", current_ram, "), skipping");
+                ns.print(server, " already at ", ns.formatRam(desired_ram), "(", ns.formatRam(current_ram), "), skipping");
+                continue;
             } else {
                 should_stop = false;
             }
             if (upgrade_cost < ns.getServerMoneyAvailable("home")) {
-                ns.print("Buying for ", server);
+                ns.print("Buying ", ns.formatRam(current_ram * 2), " for ", server);
                 ns.upgradePurchasedServer(server, current_ram * 2);
                 await ns.sleep(1000);
             }
