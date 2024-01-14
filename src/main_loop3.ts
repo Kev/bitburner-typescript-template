@@ -147,7 +147,7 @@ export async function main(ns: NS): Promise<void> {
     ns.print("Starting loop hack with threads: H", full_hack_threads, " W", full_hack_weaken_threads, " G", full_grow_threads, " W", full_grow_weaken_threads, " against ", network.target);
     let did_something = true;
     for (; ;) {
-        if (did_something) ns.print("  Security is currently ", ns.getServerSecurityLevel(network.target), " and money is ", ns.getServerMoneyAvailable(network.target));
+        if (did_something) print_state(ns, network);
         did_something = false;
         const rooted = [...network.rooted];
         while (rooted.length > 0) {
@@ -156,6 +156,7 @@ export async function main(ns: NS): Promise<void> {
             const server_max_ram = ns.getServerMaxRam(server);
             if ((server != 'home' && server_used_ram > 0) || server_used_ram / server_max_ram > 0.5) {
                 // There's already stuff running here. Home always has stuff running here, so allow an amount of that
+                // TODO: Run multiple batches on a single server if the server has enough RAM
                 continue;
             }
             const grow_time = ns.getGrowTime(network.target);
@@ -168,21 +169,21 @@ export async function main(ns: NS): Promise<void> {
             const hack_weaken_threads = Math.floor(full_hack_weaken_threads * proportion);
             const grow_threads = Math.floor(full_grow_threads * proportion);
             const grow_weaken_threads = Math.floor(full_grow_weaken_threads * proportion);
-            if (hack_threads == 0 || hack_weaken_threads == 0 || grow_threads == 0 || grow_weaken_threads == 0) {
-                // There wasn't enough RAM to run even the smallest possible batch, skip
-                continue;
-            }
-            did_something = true;
-            ns.print("    Using server ", server, " with threads: H", hack_threads, " W", hack_weaken_threads, " G", grow_threads, " W", grow_weaken_threads);
+            if (hack_threads > 0 && hack_weaken_threads > 0 && grow_threads > 0 && grow_weaken_threads > 0) {
+                // Else There wasn't enough RAM to run even the smallest possible batch, skip
+                did_something = true;
+                ns.print("    Using server ", server, " with threads: H", hack_threads, " W", hack_weaken_threads, " G", grow_threads, " W", grow_weaken_threads);
 
-            const hack_delay = weaken_time - hack_time;
-            const grow_delay = weaken_time - grow_time;
-            await ns.exec('hack_once.js', server, hack_threads, network.target, hack_delay);
-            await ns.exec('weaken_once.js', server, hack_weaken_threads, network.target, 1);
-            await ns.exec('grow_once.js', server, grow_threads, network.target, grow_delay + 2);
-            await ns.exec('weaken_once.js', server, grow_weaken_threads, network.target, 3);
+                const hack_delay = weaken_time - hack_time;
+                const grow_delay = weaken_time - grow_time;
+                await ns.exec('hack_once.js', server, hack_threads, network.target, hack_delay);
+                await ns.exec('weaken_once.js', server, hack_weaken_threads, network.target, 1);
+                await ns.exec('grow_once.js', server, grow_threads, network.target, grow_delay + 2);
+                await ns.exec('weaken_once.js', server, grow_weaken_threads, network.target, 3);
+            }
             await ns.sleep(5);
         }
+        await ns.sleep(50);
     }
 
 }
