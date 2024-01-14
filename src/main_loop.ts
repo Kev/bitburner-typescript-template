@@ -90,7 +90,7 @@ export async function main(ns: NS): Promise<void> {
 
         // ns.print("Host with highest value (", highest_value, "): ", highest_value_host);
 
-        const target = ns.getHackingLevel() >= 170 ? 'phantasy' : (ns.getHackingLevel() >= 20 ? 'joesguns' : 'n00dles');
+        const target = /*ns.getHackingLevel() >= 170 ? 'phantasy' : */(ns.getHackingLevel() >= 20 ? 'joesguns' : 'n00dles');
 
         const kill: boolean = ns.args.length > 0 && string_in('kill', ns.args.map(String));
         const no_run: boolean = ns.args.length > 0 && string_in('kill', ns.args.map(String));

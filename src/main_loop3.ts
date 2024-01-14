@@ -115,7 +115,7 @@ async function find_network(ns: NS): Promise<MyNetwork> {
                 max_cash = adjusted_hack_amount;
                 max_cash_host = host;
             }
-            // ns.print("Calculated adjusted hack amount for ", host, " is ", ns.formatNumber(adjusted_hack_amount), " with chance ", ns.formatNumber(chance_to_hack), " and max cash ", ns.formatNumber(server.moneyMax || 0));
+            ns.print("Calculated adjusted hack amount for ", host, " is ", ns.formatNumber(adjusted_hack_amount), " with chance ", ns.formatNumber(chance_to_hack), " and max cash ", ns.formatNumber(server.moneyMax || 0));
         }
         for (const adjacent_name of adjacents) {
             const adjacent = get_server(ns, network, adjacent_name);
@@ -147,6 +147,7 @@ function kill(ns: NS, script: string) {
 
 export async function main(ns: NS): Promise<void> {
     ns.disableLog('ALL');
+    ns.tail();
     ns.print("Firing off a buy loop to run until I've got a full set of servers at 256GB");
     // Although later my loop will continually upgrade servers as a small proportion of my cash, until I'm at a base level I want to shovel all my cash into them
     kill(ns, "buy_loop.js");
@@ -225,6 +226,10 @@ export async function main(ns: NS): Promise<void> {
         const server_calcs: Array<ServerCalcs> = [];
         network.server_objects.clear(); // Clear the cache of server objects, so we get fresh data
         for (const server of network.rooted) {
+            if (!server.startsWith('wondersheep')) {
+                // Just for the moment, limit it to my servers to not interfere with the main_loop3b.js that seems to work ok but doesn't max out my servers
+                continue;
+            }
             const server_object = get_server(ns, network, server);
             const needed_ram = ns.getScriptRam('hack_once.js', server) * full_hack_threads + ns.getScriptRam('weaken_once.js', server) * (full_hack_weaken_threads + full_grow_weaken_threads) + ns.getScriptRam('grow_once.js', server) * full_grow_threads;
             server_calcs.push({

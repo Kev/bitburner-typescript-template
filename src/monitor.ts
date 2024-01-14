@@ -2,6 +2,7 @@ import { NS } from '@ns'
 /** @param {NS} ns */
 export async function main(ns: NS): Promise<void> {
     ns.disableLog('ALL');
+    ns.tail();
     for (;;) {
         for (const server_p of ns.args) {
             const server = server_p as string;
