@@ -16,6 +16,7 @@ class MyNetwork {
 
 async function farm_out(ns: NS, network: MyNetwork, script: string, threads: number, ...args: Array<string>): Promise<number[]> {
     ns.print("Farming out ", script, " with ", threads, " threads, args: ", args.join(", "));
+    if (threads == 0) return [];
     for (const server of network.rooted) {
         ns.scp(script, server);
     }
@@ -27,22 +28,28 @@ async function farm_out(ns: NS, network: MyNetwork, script: string, threads: num
             const server_ram = ns.getServerMaxRam(server) - ns.getServerUsedRam(server);
             const script_ram = ns.getScriptRam(script, server);
             const threads_to_use = Math.min(threads, Math.floor(server_ram / script_ram));
+            if (threads_to_use == 0) {
+                continue;
+            }
             ns.print("    Using ", threads_to_use, " threads on ", server, " at a RAM cost of ", ns.formatRam(threads_to_use * script_ram));
             pids.push(await ns.exec(script, server, threads_to_use, ...args));
             threads -= threads_to_use;
         }
         await ns.sleep(100);
+        if (!Number.isFinite(threads)) {
+            break;
+        }
     }
     return pids;
 }
 
 
-function wait_for(ns: NS, pids: Array<number>) {
+async function wait_for(ns: NS, pids: Array<number>) {
     ns.print("  Waiting for ", pids.length, " processes to finish.");
     while (pids.length > 0) {
         const pid = pids.pop() || 0;
         while (ns.isRunning(pid)) {
-            ns.sleep(100);
+            await ns.sleep(100);
         }
     }
 }
@@ -54,15 +61,24 @@ async function prepare_server(ns: NS, network: MyNetwork) {
     const weaken_security = 0.05;
     const weakens_needed = Math.ceil(excess_security / weaken_security);
     ns.print("Weakening ", weakens_needed, " times for ", excess_security, " excess security");
-    wait_for(ns, await farm_out(ns, network, 'weaken_once.js', weakens_needed, target));
+    await wait_for(ns, await farm_out(ns, network, 'weaken_once.js', weakens_needed, target));
     const current_money = ns.getServerMoneyAvailable(target);
     const max_money = ns.getServerMaxMoney(target);
-    const grow_proportion = current_money == max_money ? 0 : (max_money - current_money) / current_money;
+    const grow_proportion = current_money >= max_money ? 0 : max_money / current_money;
+    ns.print("Current money is ", current_money, " and max money is ", max_money, " so grow proportion is ", grow_proportion);
     if (grow_proportion > 0) {
-        const grow_threads = ns.growthAnalyze(target, grow_proportion);
+        if (!isFinite(grow_proportion)) {
+            ns.print("Found an infinite grow proportion, so doing a max run of growth and then running prepare again");
+            await wait_for(ns, await farm_out(ns, network, 'grow_once.js', Infinity, target));
+            ns.print("  Pre-growth complete, starting preparation again");
+            await ns.sleep(10);
+            await prepare_server(ns, network);
+            return;
+        }
+        const grow_threads = Math.ceil(ns.growthAnalyze(target, grow_proportion));
         const grow_security = ns.growthAnalyzeSecurity(grow_threads, target);
-        const security_threads = grow_security / weaken_security;
-        ns.print("Growing ", grow_threads, " times for ", grow_proportion, " growth (", max_money - current_money, ") short");
+        const security_threads = Math.ceil(grow_security / weaken_security);
+        ns.print("Growing ", grow_threads, " times for ", grow_proportion, " growth (", max_money - current_money, " short)");
         const grow_pids = await farm_out(ns, network, 'grow_once.js', grow_threads, target);
         ns.print("Weakening ", security_threads, " times for ", grow_security, " security, with predicted effect ", ns.weakenAnalyze(security_threads));
         const security_pids = await farm_out(ns, network, 'weaken_once.js', security_threads, target);
@@ -93,20 +109,26 @@ async function find_network(ns: NS): Promise<MyNetwork> {
     return network;
 }
 
+function print_state(ns: NS, network: MyNetwork) {
+    ns.print("Security is ", ns.getServerSecurityLevel(network.target), "/", ns.getServerMinSecurityLevel(network.target), " and money is ", ns.getServerMoneyAvailable(network.target), "/", ns.getServerMaxMoney(network.target));
+}
+
 export async function main(ns: NS): Promise<void> {
     ns.disableLog('ALL');
 
     const network = await find_network(ns);
+    ns.print("Server to target: ", network.target);
+    print_state(ns, network);
     await prepare_server(ns, network);
-
+    print_state(ns, network);
 
 
     const twenty_percent = ns.getServerMaxMoney(network.target) * 0.2;
     const full_hack_threads = Math.floor(ns.hackAnalyzeThreads(network.target, twenty_percent));
     const hack_security_increase = ns.hackAnalyzeSecurity(full_hack_threads, network.target);
     const full_hack_weaken_threads = Math.ceil(hack_security_increase / 0.05) + 1; // +1 in case of float rounding errors
-    const hack_pids = await farm_out(ns, network, 'once.js', full_hack_threads, "hack", network.target);
-    const hack_security_pids = await farm_out(ns, network, 'once.js', full_hack_weaken_threads, "weaken", network.target);
+    const hack_pids = await farm_out(ns, network, 'hack_once.js', full_hack_threads, network.target);
+    const hack_security_pids = await farm_out(ns, network, 'weaken_once.js', full_hack_weaken_threads, network.target);
     await wait_for(ns, hack_pids);
     await wait_for(ns, hack_security_pids);
     ns.print("After executing initial hack threads, security is ", ns.getServerSecurityLevel(network.target), " and money is ", ns.getServerMoneyAvailable(network.target));
@@ -114,8 +136,8 @@ export async function main(ns: NS): Promise<void> {
     const full_grow_threads = Math.ceil(ns.growthAnalyze(network.target, 1.25)) + 1; // Just adding 1 in case of float rounding errors
     const grow_security_increase = ns.growthAnalyzeSecurity(full_grow_threads, network.target);
     const full_grow_weaken_threads = Math.ceil(grow_security_increase / 0.05) + 1; // +1 in case of float rounding errors
-    const grow_pids = await farm_out(ns, network, 'once.js', full_grow_threads, "grow", network.target);
-    const grow_security_pids = await farm_out(ns, network, 'once.js', full_grow_weaken_threads, "weaken", network.target);
+    const grow_pids = await farm_out(ns, network, 'grow_once.js', full_grow_threads, network.target);
+    const grow_security_pids = await farm_out(ns, network, 'weaken_once.js', full_grow_weaken_threads, network.target);
     await wait_for(ns, grow_pids);
     await wait_for(ns, grow_security_pids);
     ns.print("After executing initial grow threads, security is ", ns.getServerSecurityLevel(network.target), " and money is ", ns.getServerMoneyAvailable(network.target));
@@ -129,11 +151,17 @@ export async function main(ns: NS): Promise<void> {
         did_something = false;
         const rooted = [...network.rooted];
         while (rooted.length > 0) {
+            const server = rooted.pop() || '';
+            const server_used_ram = ns.getServerUsedRam(server);
+            const server_max_ram = ns.getServerMaxRam(server);
+            if ((server != 'home' && server_used_ram > 0) || server_used_ram / server_max_ram > 0.5) {
+                // There's already stuff running here. Home always has stuff running here, so allow an amount of that
+                continue;
+            }
             const grow_time = ns.getGrowTime(network.target);
             const hack_time = ns.getHackTime(network.target);
             const weaken_time = ns.getWeakenTime(network.target);
-            const server = rooted.pop() || '';
-            const server_ram = ns.getServerMaxRam(server) - ns.getServerUsedRam(server);
+            const server_ram = server_max_ram - server_used_ram;
             const needed_ram = ns.getScriptRam('hack_once.js', server) * full_hack_threads + ns.getScriptRam('weaken_once.js', server) * (full_hack_weaken_threads + full_grow_weaken_threads) + ns.getScriptRam('grow_once.js', server) * full_grow_threads;
             const proportion = Math.min(1, server_ram / needed_ram);
             const hack_threads = Math.floor(full_hack_threads * proportion);
