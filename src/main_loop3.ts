@@ -137,11 +137,22 @@ function print_state(ns: NS, network: MyNetwork) {
     ns.print("Security is ", ns.getServerSecurityLevel(network.target), "/", ns.getServerMinSecurityLevel(network.target), " and money is ", ns.getServerMoneyAvailable(network.target), "/", ns.getServerMaxMoney(network.target));
 }
 
+function kill(ns: NS, script: string) {
+    for (const process of ns.ps()) {
+        if (process.filename == script) {
+            ns.kill(process.pid);
+        }
+    }
+}
+
 export async function main(ns: NS): Promise<void> {
     ns.disableLog('ALL');
     ns.print("Firing off a buy loop to run until I've got a full set of servers at 256GB");
     // Although later my loop will continually upgrade servers as a small proportion of my cash, until I'm at a base level I want to shovel all my cash into them
+    kill(ns, "buy_loop.js");
+    kill(ns, "spread.js");
     ns.run('buy_loop.js', 1, 256);
+    ns.run('spread.js');
     const network = await find_network(ns);
     if (ns.args.length > 0) {
         network.target = ns.args[0] as string;
@@ -184,63 +195,68 @@ export async function main(ns: NS): Promise<void> {
         hack_delay!: number;
         grow_delay!: number;
     }
-    const server_calcs : Array<ServerCalcs> = [];
-    for (const server of network.rooted) {
-        const server_object = get_server(ns, network, server);
-        const grow_time = ns.getGrowTime(network.target);
-        const hack_time = ns.getHackTime(network.target);
-        const weaken_time = ns.getWeakenTime(network.target);
-        const needed_ram = ns.getScriptRam('hack_once.js', server) * full_hack_threads + ns.getScriptRam('weaken_once.js', server) * (full_hack_weaken_threads + full_grow_weaken_threads) + ns.getScriptRam('grow_once.js', server) * full_grow_threads;
-        server_calcs.push({
-            name: server,
-            server: server_object,
-            grow_time: grow_time,
-            hack_time: hack_time,
-            weaken_time: weaken_time,
-            needed_ram: needed_ram,
-            hack_delay: weaken_time - hack_time,
-            grow_delay: weaken_time - grow_time,
-        });
-    }
     for (; ;) {
-        // for (const server of ns.getPurchasedServers()) {
-        //     const ram = ns.getServerMaxRam(server);
-        //     if (ram >= ns.getPurchasedServerMaxRam()) {
-        //         continue;
-        //     }
-        //     const cash = ns.getServerMoneyAvailable('home');
-        //     const cost = ns.getPurchasedServerUpgradeCost(server, ram * 2);
-        //     if (cost < cash * 0.1) {
-        //         // Buy an upgrade if it's a small proportion of my total cash
-        //         ns.print("Upgrading ", server, " from ", ns.formatRam(ram), " to ", ns.formatRam(ram * 2), " for ", ns.formatNumber(cost));
-        //         ns.upgradePurchasedServer(server, ram * 2);
-        //     }
-        // }
-        for (const server of server_calcs) {
-            const server_used_ram = ns.getServerUsedRam(server.name);
-
-            const server_ram = server.server.maxRam - server_used_ram;
-            if (server_ram < server.needed_ram && server_used_ram > 0) {
-                // Skip servers that can't fit a full batch in, unless they're empty, in which case assign a partial batch to max the RAM
+        for (const server of ns.getPurchasedServers()) {
+            const ram = ns.getServerMaxRam(server);
+            if (ram >= ns.getPurchasedServerMaxRam()) {
                 continue;
             }
-            const proportion = Math.min(1, server_ram / server.needed_ram);
-            const hack_threads = Math.floor(full_hack_threads * proportion);
-            const hack_weaken_threads = Math.floor(full_hack_weaken_threads * proportion);
-            const grow_threads = Math.floor(full_grow_threads * proportion);
-            const grow_weaken_threads = Math.floor(full_grow_weaken_threads * proportion);
-            if (hack_threads > 0 && hack_weaken_threads > 0 && grow_threads > 0 && grow_weaken_threads > 0) {
-                // Else There wasn't enough RAM to run even the smallest possible batch, skip
-                // ns.print("    Using server ", server, " with threads: H", hack_threads, " W", hack_weaken_threads, " G", grow_threads, " W", grow_weaken_threads);
-                await ns.exec('hack_once.js', server.name, hack_threads, network.target, server.hack_delay);
-                await ns.exec('weaken_once.js', server.name, hack_weaken_threads, network.target, 1);
-                await ns.exec('grow_once.js', server.name, grow_threads, network.target, server.grow_delay + 2);
-                await ns.exec('weaken_once.js', server.name, grow_weaken_threads, network.target, 3);
-                await ns.sleep(1);
+            const cash = ns.getServerMoneyAvailable('home');
+            const cost = ns.getPurchasedServerUpgradeCost(server, ram * 2);
+            if (cost < cash * 0.1) {
+                // Buy an upgrade if it's a small proportion of my total cash
+                ns.print("Upgrading ", server, " from ", ns.formatRam(ram), " to ", ns.formatRam(ram * 2), " for ", ns.formatNumber(cost));
+                ns.upgradePurchasedServer(server, ram * 2);
+            }
+        }
+
+        const server_calcs: Array<ServerCalcs> = [];
+        network.server_objects.clear(); // Clear the cache of server objects, so we get fresh data
+        for (const server of network.rooted) {
+            const server_object = get_server(ns, network, server);
+            const grow_time = ns.getGrowTime(network.target);
+            const hack_time = ns.getHackTime(network.target);
+            const weaken_time = ns.getWeakenTime(network.target);
+            const needed_ram = ns.getScriptRam('hack_once.js', server) * full_hack_threads + ns.getScriptRam('weaken_once.js', server) * (full_hack_weaken_threads + full_grow_weaken_threads) + ns.getScriptRam('grow_once.js', server) * full_grow_threads;
+            server_calcs.push({
+                name: server,
+                server: server_object,
+                grow_time: grow_time,
+                hack_time: hack_time,
+                weaken_time: weaken_time,
+                needed_ram: needed_ram,
+                hack_delay: weaken_time - hack_time,
+                grow_delay: weaken_time - grow_time,
+            });
+        }
+
+        for (let i = 0; i < 2000; i++) { // Running the purchase/recalcs every 2000 iterations is hopefully ok without slowing down the processing cycle.
+            for (const server of server_calcs) {
+                const server_used_ram = ns.getServerUsedRam(server.name);
+
+                const server_ram = server.server.maxRam - server_used_ram;
+                if (server_ram < server.needed_ram && server_used_ram > 0) {
+                    // Skip servers that can't fit a full batch in, unless they're empty, in which case assign a partial batch to max the RAM
+                    continue;
+                }
+                const proportion = Math.min(1, server_ram / server.needed_ram);
+                const hack_threads = Math.floor(full_hack_threads * proportion);
+                const hack_weaken_threads = Math.floor(full_hack_weaken_threads * proportion);
+                const grow_threads = Math.floor(full_grow_threads * proportion);
+                const grow_weaken_threads = Math.floor(full_grow_weaken_threads * proportion);
+                if (hack_threads > 0 && hack_weaken_threads > 0 && grow_threads > 0 && grow_weaken_threads > 0) {
+                    // Else There wasn't enough RAM to run even the smallest possible batch, skip
+                    // ns.print("    Using server ", server, " with threads: H", hack_threads, " W", hack_weaken_threads, " G", grow_threads, " W", grow_weaken_threads);
+                    await ns.exec('hack_once.js', server.name, hack_threads, network.target, server.hack_delay);
+                    await ns.exec('weaken_once.js', server.name, hack_weaken_threads, network.target, 1);
+                    await ns.exec('grow_once.js', server.name, grow_threads, network.target, server.grow_delay + 2);
+                    await ns.exec('weaken_once.js', server.name, grow_weaken_threads, network.target, 3);
+                    await ns.sleep(1);
+                }
+                await ns.sleep(0);
             }
             await ns.sleep(0);
         }
-        await ns.sleep(0);
     }
 
 }

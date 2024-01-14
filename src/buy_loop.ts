@@ -3,7 +3,7 @@ import { NS } from '@ns'
 export async function main(ns : NS) : Promise<void> {
     ns.disableLog('ALL');
     const ram = 8;
-    const desired_ram : number = ns.args.length > 0 ? parseInt(ns.args[0] as string) : 64;
+    const desired_ram: number = ns.args.length > 0 ? parseInt(ns.args[0] as string) : ns.getPurchasedServerMaxRam();
     let should_stop = false;
     while (!should_stop) {
         should_stop = true;
@@ -36,7 +36,7 @@ export async function main(ns : NS) : Promise<void> {
             const upgrade_cost = ns.getPurchasedServerUpgradeCost(server, current_ram * 2);
             // ns.print("Considering ", server, " for upgrade. Current RAM = ", current_ram, ", max = ", max_ram, " upgrade cost ", upgrade_cost);
             if (current_ram >= desired_ram) {
-                ns.print(server, " already at ", ns.formatRam(desired_ram), "(", ns.formatRam(current_ram), "), skipping");
+                // ns.print(server, " already at ", ns.formatRam(desired_ram), "(", ns.formatRam(current_ram), "), skipping");
                 continue;
             } else {
                 should_stop = false;
@@ -47,7 +47,7 @@ export async function main(ns : NS) : Promise<void> {
                 await ns.sleep(1000);
             }
         }
-        ns.print("Sleeping before Next loop");
+        // ns.print("Sleeping before Next loop");
         await ns.sleep(1000);
     }
 }
