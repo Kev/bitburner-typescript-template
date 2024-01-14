@@ -154,16 +154,15 @@ export async function main(ns: NS): Promise<void> {
             const server = rooted.pop() || '';
             const server_used_ram = ns.getServerUsedRam(server);
             const server_max_ram = ns.getServerMaxRam(server);
-            if ((server != 'home' && server_used_ram > 0) || server_used_ram / server_max_ram > 0.5) {
-                // There's already stuff running here. Home always has stuff running here, so allow an amount of that
-                // TODO: Run multiple batches on a single server if the server has enough RAM
-                continue;
-            }
             const grow_time = ns.getGrowTime(network.target);
             const hack_time = ns.getHackTime(network.target);
             const weaken_time = ns.getWeakenTime(network.target);
             const server_ram = server_max_ram - server_used_ram;
             const needed_ram = ns.getScriptRam('hack_once.js', server) * full_hack_threads + ns.getScriptRam('weaken_once.js', server) * (full_hack_weaken_threads + full_grow_weaken_threads) + ns.getScriptRam('grow_once.js', server) * full_grow_threads;
+            if (server_ram < needed_ram && server_used_ram > 0) {
+                // Skip servers that can't fit a full batch in, unless they're empty, in which case assign a partial batch to max the RAM
+                continue;
+            }
             const proportion = Math.min(1, server_ram / needed_ram);
             const hack_threads = Math.floor(full_hack_threads * proportion);
             const hack_weaken_threads = Math.floor(full_hack_weaken_threads * proportion);
