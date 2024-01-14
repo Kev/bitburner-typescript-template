@@ -165,7 +165,8 @@ export async function main(ns: NS): Promise<void> {
     const hack_percentage = 0.3;
     const hack_amount = ns.getServerMaxMoney(network.target) * hack_percentage;
     const full_hack_threads = Math.floor(ns.hackAnalyzeThreads(network.target, hack_amount));
-    const hack_security_increase = ns.hackAnalyzeSecurity(full_hack_threads, network.target);
+    // const hack_security_increase = ns.hackAnalyzeSecurity(full_hack_threads, network.target);
+    const hack_security_increase = full_hack_threads * 0.002;
     const full_hack_weaken_threads = Math.ceil(hack_security_increase / 0.05) + 1; // +1 in case of float rounding errors
     const hack_pids = await farm_out(ns, network, 'hack_once.js', full_hack_threads, network.target);
     const hack_security_pids = await farm_out(ns, network, 'weaken_once.js', full_hack_weaken_threads, network.target);
@@ -175,7 +176,8 @@ export async function main(ns: NS): Promise<void> {
 
     const grow_multiplier = 1 / (1 - hack_percentage);
     const full_grow_threads = Math.ceil(ns.growthAnalyze(network.target, grow_multiplier)) + 1; // Just adding 1 in case of float rounding errors
-    const grow_security_increase = ns.growthAnalyzeSecurity(full_grow_threads, network.target);
+    // const grow_security_increase = ns.growthAnalyzeSecurity(full_grow_threads, network.target);
+    const grow_security_increase = full_grow_threads * 0.004;
     const full_grow_weaken_threads = Math.ceil(grow_security_increase / 0.05) + 1; // +1 in case of float rounding errors
     const grow_pids = await farm_out(ns, network, 'grow_once.js', full_grow_threads, network.target);
     const grow_security_pids = await farm_out(ns, network, 'weaken_once.js', full_grow_weaken_threads, network.target);
@@ -250,11 +252,11 @@ export async function main(ns: NS): Promise<void> {
                 if (hack_threads > 0 && hack_weaken_threads > 0 && grow_threads > 0 && grow_weaken_threads > 0) {
                     // Else There wasn't enough RAM to run even the smallest possible batch, skip
                     // ns.print("    Using server ", server, " with threads: H", hack_threads, " W", hack_weaken_threads, " G", grow_threads, " W", grow_weaken_threads);
-                    await ns.exec('hack_once.js', server.name, hack_threads, network.target, server.hack_delay);
+                    await ns.exec('hack_once.js', server.name, hack_threads, network.target, Math.floor(server.hack_delay) );
                     await ns.exec('weaken_once.js', server.name, hack_weaken_threads, network.target);
-                    await ns.exec('grow_once.js', server.name, grow_threads, network.target, server.grow_delay);
-                    await ns.exec('weaken_once.js', server.name, grow_weaken_threads, network.target);
-                    await ns.sleep(1);
+                    await ns.exec('grow_once.js', server.name, grow_threads, network.target, Math.floor(server.grow_delay) + 1);
+                    await ns.exec('weaken_once.js', server.name, grow_weaken_threads, network.target, 2);
+                    await ns.sleep(5);
                 }
                 await ns.sleep(0);
             }
