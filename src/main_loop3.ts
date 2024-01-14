@@ -115,7 +115,7 @@ async function find_network(ns: NS): Promise<MyNetwork> {
                 max_cash = adjusted_hack_amount;
                 max_cash_host = host;
             }
-            ns.print("Calculated adjusted hack amount for ", host, " is ", ns.formatNumber(adjusted_hack_amount), " with chance ", ns.formatNumber(chance_to_hack), " and max cash ", ns.formatNumber(server.moneyMax || 0));
+            // ns.print("Calculated adjusted hack amount for ", host, " is ", ns.formatNumber(adjusted_hack_amount), " with chance ", ns.formatNumber(chance_to_hack), " and max cash ", ns.formatNumber(server.moneyMax || 0));
         }
         for (const adjacent_name of adjacents) {
             const adjacent = get_server(ns, network, adjacent_name);
@@ -134,7 +134,7 @@ async function find_network(ns: NS): Promise<MyNetwork> {
 }
 
 function print_state(ns: NS, network: MyNetwork) {
-    ns.print("Security is ", ns.getServerSecurityLevel(network.target), "/", ns.getServerMinSecurityLevel(network.target), " and money is ", ns.getServerMoneyAvailable(network.target), "/", ns.getServerMaxMoney(network.target));
+    ns.print("Security is ", ns.getServerSecurityLevel(network.target), "/", ns.getServerMinSecurityLevel(network.target), " and money is ", ns.formatNumber(ns.getServerMoneyAvailable(network.target)), "/", ns.formatNumber(ns.getServerMaxMoney(network.target)));
 }
 
 function kill(ns: NS, script: string) {
@@ -238,8 +238,10 @@ export async function main(ns: NS): Promise<void> {
                 grow_delay: grow_delay,
             });
         }
-
+        let did_something = true;
         for (let i = 0; i < 2000; i++) { // Running the purchase/recalcs every 2000 iterations is hopefully ok without slowing down the processing cycle.
+            if (did_something) print_state(ns, network);
+            did_something = false
             for (const server of server_calcs) {
                 const server_used_ram = ns.getServerUsedRam(server.name);
 
@@ -257,10 +259,11 @@ export async function main(ns: NS): Promise<void> {
                     // Else There wasn't enough RAM to run even the smallest possible batch, skip
                     // ns.print("    Using server ", server, " with threads: H", hack_threads, " W", hack_weaken_threads, " G", grow_threads, " W", grow_weaken_threads);
                     await ns.exec('hack_once.js', server.name, hack_threads, network.target, server.hack_delay);
-                    await ns.exec('weaken_once.js', server.name, hack_weaken_threads, network.target);
+                    await ns.exec('weaken_once.js', server.name, hack_weaken_threads, network.target, 1);
                     await ns.exec('grow_once.js', server.name, grow_threads, network.target, server.grow_delay + 2);
                     await ns.exec('weaken_once.js', server.name, grow_weaken_threads, network.target, 3);
-                    await ns.sleep(5);
+                    await ns.sleep(1);
+                    did_something = true;
                 }
                 await ns.sleep(0);
             }
