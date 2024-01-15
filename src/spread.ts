@@ -1,5 +1,5 @@
 import { NS } from '@ns'
-
+import { find_servers } from './base';
 function string_in(s: string, a: Array<string>) {
     for (const i of a) {
         if (s == i) {
@@ -11,6 +11,7 @@ function string_in(s: string, a: Array<string>) {
 
 export async function main(ns: NS): Promise<void> {
     ns.disableLog('ALL');
+    find_servers(ns);
     for (; ;) {
         ns.print("Spread start");
         const hack_script = 'hackloop.js';
@@ -24,6 +25,8 @@ export async function main(ns: NS): Promise<void> {
         const port_hacks: Array<string> = ['BruteSSH.exe', 'FTPCrack.exe', 'relaySMTP.exe', 'HTTPWorm.exe', 'SQLInject.exe'];
         const available_port_hacks: Array<string> = port_hacks.filter(port_hack => ns.fileExists(port_hack))
         const num_ports_possible: number = available_port_hacks.length;
+
+
 
         while (to_scan.length > 0) {
             // ns.print("Previously scanned hosts: " + scanned);
@@ -65,6 +68,7 @@ export async function main(ns: NS): Promise<void> {
                         }
                         ns.print("Nuking ");
                         await ns.nuke(adjacent);
+                        find_servers(ns);
                     }
                 }
                 if (ns.hasRootAccess(adjacent) && !(string_in(adjacent, rooted))) {

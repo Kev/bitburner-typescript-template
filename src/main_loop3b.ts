@@ -32,7 +32,7 @@ async function farm_out(ns: NS, network: MyNetwork, script: string, threads: num
                 continue;
             }
             ns.print("    Using ", threads_to_use, " threads on ", server, " at a RAM cost of ", ns.formatRam(threads_to_use * script_ram));
-            pids.push(await ns.exec(script, server, threads_to_use, ...args));
+            pids.push(ns.exec(script, server, threads_to_use, ...args));
             threads -= threads_to_use;
         }
         await ns.sleep(100);
@@ -191,10 +191,10 @@ export async function main(ns: NS): Promise<void> {
 
                 const hack_delay = weaken_time - hack_time;
                 const grow_delay = weaken_time - grow_time;
-                await ns.exec('hack_once.js', server, hack_threads, network.target, hack_delay);
-                await ns.exec('weaken_once.js', server, hack_weaken_threads, network.target, 1);
-                await ns.exec('grow_once.js', server, grow_threads, network.target, grow_delay + 2);
-                await ns.exec('weaken_once.js', server, grow_weaken_threads, network.target, 3);
+                ns.exec('hack_once.js', server, hack_threads, network.target, hack_delay);
+                ns.exec('weaken_once.js', server, hack_weaken_threads, network.target, 1);
+                ns.exec('grow_once.js', server, grow_threads, network.target, grow_delay + 2);
+                ns.exec('weaken_once.js', server, grow_weaken_threads, network.target, 3);
             }
             await ns.sleep(5);
         }

@@ -53,7 +53,7 @@ export async function main(ns: NS): Promise<void> {
                 }
                 const server_ram = ns.getServerMaxRam(server) - ns.getServerUsedRam(server);
                 remaining_ram_needed -= server_ram;
-                await ns.exec('just_weaken.js', server, Math.floor(server_ram / weaken_memory), target);
+                ns.exec('just_weaken.js', server, Math.floor(server_ram / weaken_memory), target);
             }
             excess_security = ns.getServerSecurityLevel(target) - ns.getServerMinSecurityLevel(target);
             await ns.sleep(100);
@@ -90,9 +90,9 @@ export async function main(ns: NS): Promise<void> {
         const grow_threads = Math.floor(home_ram_to_use * grow_proportion);
         const hack_threads = Math.floor(home_ram_to_use * hack_proportion);
         ns.print("Threads: weaken ", weaken_threads, " grow ", grow_threads, " hack ", hack_threads);
-        await ns.exec('once.js', 'home', weaken_threads, "weaken", target);
-        await ns.exec('once.js', 'home', grow_threads, "grow", target);
-        await ns.exec('once.js', 'home', hack_threads, "hack", target);
+        ns.exec('once.js', 'home', weaken_threads, "weaken", target);
+        ns.exec('once.js', 'home', grow_threads, "grow", target);
+        ns.exec('once.js', 'home', hack_threads, "hack", target);
 
 
     }
