@@ -3,6 +3,26 @@ import { BasicHGWOptions, NS } from "@ns";
 export const port_hacks = ['BruteSSH.exe', 'FTPCrack.exe', 'relaySMTP.exe', 'HTTPWorm.exe', 'SQLInject.exe'];
 export const faction_servers = ['CSEC', 'avmnite-02h', 'I.I.I.I', 'run4theh111z'];
 
+export const colours = {
+    black: "\u001b[30m",
+    red: "\u001b[31m",
+    green: "\u001b[32m",
+    yellow: "\u001b[33m",
+    blue: "\u001b[34m",
+    magenta: "\u001b[35m",
+    cyan: "\u001b[36m",
+    white: "\u001b[37m",
+    brightBlack: "\u001b[30;1m",
+    brightRed: "\u001b[31;1m",
+    brightGreen: "\u001b[32;1m",
+    brightYellow: "\u001b[33;1m",
+    brightBlue: "\u001b[34;1m",
+    brightMagenta: "\u001b[35;1m",
+    brightCyan: "\u001b[36;1m",
+    brightWhite: "\u001b[37;1m",
+    reset: "\u001b[0m"
+};
+
 export function available_port_hacks(ns: NS): Array<string> {
     return port_hacks.filter(port_hack => ns.fileExists(port_hack))
 }
@@ -169,17 +189,30 @@ export async function prepare_server(ns: NS, target: string) {
     }
 }
 
-export async function hwgw(ns: NS, server: string, hack_threads: number, hack_weaken_threads: number, grow_threads: number, grow_weaken_threads: number, target: string, hack_delay: number, grow_delay: number) {
-    ns.run('hwgw.js', 1, server, hack_threads, hack_weaken_threads, grow_threads, grow_weaken_threads, target, hack_delay, grow_delay);
+export async function hwgw(ns: NS, server: string, hack_threads: number, hack_weaken_threads: number, grow_threads: number, grow_weaken_threads: number, target: string, hack_time: number, grow_time: number, weaken_time: number) {
+    ns.run('hwgw.js', 1, server, hack_threads, hack_weaken_threads, grow_threads, grow_weaken_threads, target, hack_time, grow_time, weaken_time);
 }
 
 export async function hgw_once(ns: NS, func: (target: string, options: BasicHGWOptions) => Promise<number>, port_text: string): Promise<void> {
     const target = ns.args[0] as string;
-    const delay = ns.args.length > 1 ? parseInt(ns.args[1] as string) : 0;
+    let delay = 0;
+    if (ns.args.length > 1) {
+        const target_time = ns.args[1] as number;
+        const duration = ns.args[2] as number;
+        const now = Date.now();
+        delay = target_time - now - duration;
+        if (delay < 0) {
+            ns.alert("Delay is negative for " + target + ": " + delay as string + "\n" + "Current time is " + new Date(now).toISOString() + ", " + "target time is " + new Date(target_time).toISOString() + ", " + "duration is " + duration as string);
+        }
+    }
     const options = delay > 0 ? { 'additionalMsec': delay } : {};
     await func(target, options);
-    // const message = JSON.stringify({ 'what': port_text, 'target': target, 'delay': delay, completion: performance.now(), runner: ns.getHostname() });
+    // const message = JSON.stringify({ 'what': port_text, 'target': target, 'delay': delay, completion: Date.now(), runner: ns.getHostname() });
     // if (ns.writePort(1, message)) {
     //     ns.print("Failed to write completion ", message);
     // }
 }
+
+
+// Shyguy — Today at 21:08
+// this is the entrypoint for a script where i used it, its with TypeScript and React but the basic idea is the same https://github.com/shyguy1412/bitburner-ui-extension/blob/master/src/bitburner/bitburner-ui-extension.ts

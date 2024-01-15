@@ -10,12 +10,55 @@ class TargetCalculation {
     grow_time!: number;
     hack_time!: number;
     weaken_time!: number;
-    hack_delay!: number;
-    grow_delay!: number;
     server_ram_requirements!: Map<string, number>;
 }
 
 async function calculate_target(ns: NS, target: string, hack_percentage: number): Promise<TargetCalculation> {
+    const calculations = ns.fileExists('Formulas.exe') ? await calculate_target_with_formulas(ns, target, hack_percentage) : await calculate_target_without_formulas(ns, target, hack_percentage);
+    ns.print("  ", calculations.name, " needs ", calculations.hack_threads, " hack threads, ", calculations.hack_weaken_threads, " hack weaken threads, ", calculations.grow_threads, " grow threads, ", calculations.grow_weaken_threads, " grow weaken threads, ", ns.formatNumber(calculations.grow_time/1000), "s grow time, ", ns.formatNumber(calculations.hack_time/1000), "s hack time, ", ns.formatNumber(calculations.weaken_time/1000), "s weaken time.");
+    return calculations;
+}
+
+async function calculate_target_with_formulas(ns: NS, target: string, hack_percentage: number): Promise<TargetCalculation> {
+    const simulated_server = ns.getServer(target);
+    simulated_server.hackDifficulty = simulated_server.minDifficulty;
+    simulated_server.moneyAvailable = simulated_server.moneyMax ?? 0;
+    const player = ns.getPlayer();
+
+    const per_thread_hack_amount = ns.formulas.hacking.hackPercent(simulated_server, player);
+    const hack_threads = Math.ceil(hack_percentage / per_thread_hack_amount);
+
+    simulated_server.moneyAvailable = (simulated_server.moneyMax ?? 0) * (1 - hack_threads * per_thread_hack_amount);
+    // ns.print(target, " simulating ", ns.formatNumber(simulated_server.moneyAvailable), "/", ns.formatNumber(simulated_server.moneyMax ?? 0), " money after ", hack_threads, " hack threads");
+
+    const grow_threads = Math.ceil(ns.formulas.hacking.growThreads(simulated_server, player, simulated_server.moneyMax ?? 0));
+    const hack_weaken_threads = Math.ceil(hack_threads * 0.002 / 0.05);
+    const grow_weaken_threads = Math.ceil(grow_threads * 0.004 / 0.05);
+
+    const servers = rooted(cached_servers(ns));
+    const server_ram_requirements: Map<string, number> = new Map<string, number>();
+    for (const server of servers) {
+        server_ram_requirements.set(server, calculate_needed_ram(ns, server, hack_threads, hack_weaken_threads, grow_threads, grow_weaken_threads));
+    }
+
+    const grow_time = ns.formulas.hacking.growTime(simulated_server, player);
+    const hack_time = ns.formulas.hacking.hackTime(simulated_server, player);
+    const weaken_time = ns.formulas.hacking.weakenTime(simulated_server, player);
+
+    return {
+        name: target,
+        hack_threads: hack_threads,
+        hack_weaken_threads: hack_weaken_threads,
+        grow_threads: grow_threads,
+        grow_weaken_threads: grow_weaken_threads,
+        grow_time: grow_time,
+        hack_time: hack_time,
+        weaken_time: weaken_time,
+        server_ram_requirements: server_ram_requirements,
+    };
+}
+
+async function calculate_target_without_formulas(ns: NS, target: string, hack_percentage: number): Promise<TargetCalculation> {
     ns.print("Calculating target ", target, " with hack percentage ", hack_percentage);
     const max_money = ns.getServerMaxMoney(target);
     const hack_amount = max_money * hack_percentage;
@@ -47,8 +90,6 @@ async function calculate_target(ns: NS, target: string, hack_percentage: number)
     const grow_time = ns.getGrowTime(target);
     const hack_time = ns.getHackTime(target);
     const weaken_time = ns.getWeakenTime(target);
-    const hack_delay = Math.floor(weaken_time - hack_time);
-    const grow_delay = Math.floor(weaken_time - grow_time);
 
     const servers = rooted(cached_servers(ns));
     const server_ram_requirements: Map<string, number> = new Map<string, number>();
@@ -65,8 +106,6 @@ async function calculate_target(ns: NS, target: string, hack_percentage: number)
         grow_time: grow_time,
         hack_time: hack_time,
         weaken_time: weaken_time,
-        hack_delay: hack_delay,
-        grow_delay: grow_delay,
         server_ram_requirements: server_ram_requirements
     };
 }
@@ -95,10 +134,11 @@ export async function main(ns: NS): Promise<void> {
     for (const target of targets) {
         target_calculations.push(await calculate_target(ns, target, hack_percentage));
     }
-
+    // ns.exit();
     const hwgw_ram = ns.getScriptRam('hwgw.js');
-    let last_now = performance.now();
+    let last_now = Date.now();
     const home_ram = ns.getServerMaxRam('home');
+    let launched_batches = 0;
     for (; ;) {
         for (const target of target_calculations) {
             for (const server_name of target.server_ram_requirements.keys()) {
@@ -107,35 +147,28 @@ export async function main(ns: NS): Promise<void> {
                 const server = ns.getServer(server_name);
 
                 const server_ram = server.maxRam - server_used_ram;
-                if (server_ram < needed_ram && server_used_ram > 0) {
-                    // Skip servers that can't fit a full batch in, unless they're empty, in which case assign a partial batch to max the RAM
+                if (server_ram < needed_ram ) {
+                    // Skip servers that can't fit a full batch in
                     continue;
                 }
-                const proportion = Math.min(1, server_ram / needed_ram);
-                const hack_threads = Math.floor(target.hack_threads * proportion);
-                const hack_weaken_threads = Math.floor(target.hack_weaken_threads * proportion);
-                const grow_threads = Math.floor(target.grow_threads * proportion);
-                const grow_weaken_threads = Math.floor(target.grow_weaken_threads * proportion);
-                if (hack_threads > 0 && hack_weaken_threads > 0 && grow_threads > 0 && grow_weaken_threads > 0) {
-                    while (home_ram - ns.getServerUsedRam('home') < hwgw_ram) {
-                        await ns.sleep(5);
-                    }
-                    await hwgw(ns, server_name, hack_threads, hack_weaken_threads, grow_threads, grow_weaken_threads, target.name, target.hack_delay, target.grow_delay);
-                    await ns.sleep(0);
-                    // await ns.sleep(1);
+                while (home_ram - ns.getServerUsedRam('home') < hwgw_ram) {
+                    await ns.sleep(5);
                 }
-                // await ns.sleep(0);
+                await hwgw(ns, server_name, target.hack_threads, target.hack_weaken_threads, target.grow_threads, target.grow_weaken_threads, target.name, target.hack_time, target.grow_time, target.weaken_time);
+                if (launched_batches % 1000 == 999) {
+                    ns.print("Launched ", launched_batches + 1, " batches");
+                }
+                launched_batches++;
+                // await ns.sleep(1);
             }
+            await ns.sleep(1);
         }
-        await ns.sleep(0);
-        const now = performance.now();
+        const now = Date.now();
         await ns.sleep(Math.min(10, Math.max(0, now - last_now)));
-        last_now = performance.now();
+        last_now = Date.now();
     }
 }
 
 
 // TODO: Align jobs so that they never start at the time another is finishing. Either time-aligning (all finish on even seconds/launch on odd seconds) or ns.portHandle().nextWrite() to ensure all four are launched not between other fours.
-// TODO: Use RunOptions to make HGW temporary ns.exec(weak, host, { threads: weakRatio1, temporary: true }, target, (offset)); https://github.com/bitburner-official/bitburner-src/blob/dev/markdown/bitburner.ns.exec.md
 // TODO: Launch the calculations in parallel
-// TODO: If formulas is available, use it to calculate the number of threads needed to hack/grow a server
