@@ -200,48 +200,28 @@ export async function prepare_server(ns: NS, target: string, wait = true) {
     }
 }
 
-export async function hwgw(ns: NS, server: string, hack_threads: number, hack_weaken_threads: number, grow_threads: number, grow_weaken_threads: number, target: string, hack_time: number, grow_time: number, weaken_time: number, port: number, batch: number) {
-    ns.run('hwgw.js', 1, server, hack_threads, hack_weaken_threads, grow_threads, grow_weaken_threads, target, hack_time, grow_time, weaken_time, port, batch);
-}
-
-export async function hgw_once(ns: NS, func: (target: string, options: BasicHGWOptions) => Promise<number>, port_text: string): Promise<void> {
+export async function hgw_once(ns: NS, func: (target: string, options: BasicHGWOptions) => Promise<number>, port_text: string): Promise<number> {
     if (ns.args.length < 1) {
-        ns.tprint("Usage: hgw_once.js target [target_end_time duration port batch]");
-        return;
+        ns.tprint("Usage: hgw_once.js target [weaken_time task_duration port batch]");
+        return 0;
     }
     const target = ns.args[0] as string;
     let delay = 0;
-    const script_start_time = 0;
-    let function_start_time = 0;
-    let target_end_time = 0;
-    let duration = 0;
+    const now = Date.now();
+    ns.atExit(() => {
+        ns.write("a_completion_listener.txt", `${ns.pid} FINISHED ${port_text}->${target}@${ns.getHostname()} delay${delay} completed ${Date.now()} started ${now}\n`, 'a');
+    });
     if (ns.args.length > 1) {
-        target_end_time = ns.args[1] as number;
-        duration = ns.args[2] as number;
-        // All the tasks are being scheduled to finish on a round second, so start them on a half second to avoid starting in the middle of the HWGW completing when the sec/cash is off
-        // script_start_time = Date.now();
-        // const time_until_mid_second = 1500 - (script_start_time % 1000);
-        // if (time_until_mid_second > 0) {
-        //     await ns.sleep(time_until_mid_second);
-        // }
-        function_start_time = Date.now();
-        delay = target_end_time - function_start_time - duration;
+        const weaken_time = ns.args[1] as number;
+        const duration = ns.args[2] as number;
+        delay = weaken_time - duration;
         if (delay < 0) {
-            ns.alert("Delay is negative for " + target + ": " + delay as string + "\n" + "Current time is " + new Date(function_start_time).toISOString() + ", " + "target time is " + new Date(target_end_time).toISOString() + ", " + "duration is " + duration as string);
+            ns.alert("Delay is negative for " + target + ": " + delay as string);
         }
     }
+    ns.write("a_completion_listener.txt", `${ns.pid} STARTED  ${port_text}->${target}@${ns.getHostname()} delay${delay} started ${now}\n`, 'a');
     const options = delay > 0 ? { 'additionalMsec': delay } : {};
-    await func(target, options);
-    if (ns.args.length > 3) {
-        const port = ns.args[3] as number;
-        const batch = ns.args[4] as number;
-        const message = JSON.stringify({ what: port_text, target: target, delay: delay, duration: duration, completion: Date.now(), runner: ns.getHostname(), script_start_time: script_start_time, function_start_time: function_start_time, target_end_time: target_end_time, batch: batch });
-        ns.write("a_batch_completions.txt", `${message as string},\n`, 'a');
-        // if (ns.writePort(port, message)) {
-        //     // ns.print("Failed to write completion ", message);
-        // }
-    }
-
+    return func(target, options);
 }
 
 

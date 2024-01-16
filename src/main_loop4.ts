@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { best_targets_uncached, cached_servers, farm_out, hwgw, prepare_server, rooted, wait_for } from "base";
+import { best_targets_uncached, cached_servers, farm_out, prepare_server, rooted, wait_for } from "base";
 
 class TargetCalculation {
     name = '';
@@ -33,12 +33,12 @@ async function calculate_target_with_formulas(ns: NS, target: string, hack_perce
     const server_ram_requirements: Map<string, number> = new Map<string, number>();
     for (const server of servers) {
         const needed = calculate_needed_ram(ns, server, hack_threads, hack_weaken_threads, grow_threads, grow_weaken_threads);
-        if (needed < ns.getServerMaxRam(server)) {
-            server_ram_requirements.set(server, needed);
-            ns.print("  ", server, " needs ", ns.formatRam(needed), " RAM for a full batch against ", target, ".");
-        } else {
-            ns.print("Not including ", server, " in calculations for ", target, " because it doesn't have enough RAM (", ns.formatRam(ns.getServerMaxRam(server)), "/", ns.formatRam(needed), ").");
-        }
+        // if (needed < ns.getServerMaxRam(server)) {
+        server_ram_requirements.set(server, needed);
+        ns.print("  ", server, " needs ", ns.formatRam(needed), " RAM for a full batch against ", target, ".");
+        // } else {
+        //     ns.print("Not including ", server, " in calculations for ", target, " because it doesn't have enough RAM (", ns.formatRam(ns.getServerMaxRam(server)), "/", ns.formatRam(needed), ").");
+        // }
 
     }
 
@@ -123,44 +123,19 @@ export async function main(ns: NS): Promise<void> {
     const port = ns.ps().filter(p => p.filename == 'main_loop4.js').length;
     ns.print("Using port ", port);
 
-    const num_servers = ns.args.length > 0 ? ns.args[0] as number : 1;
+    // const num_servers = ns.args.length > 0 ? ns.args[0] as number : 1;
     const hack_percentage = 0.3;
 
     const formulas = ns.fileExists('Formulas.exe');
-    const targets = best_targets_uncached(ns, num_servers);
-    ns.print("Targets: ", targets.join(", "));
-    ns.run('monitor.js', 1, ...targets);
-    if (formulas) {
-        ns.print("Using formulas, skipping preparation");
-    } else {
-        const prepare_pids = [];
-        for (const target of targets) {
-            prepare_pids.push(ns.run("prepare.js", 1, target));
-        }
-        ns.print("Waiting for prepare to finish.");
-        await wait_for(ns, prepare_pids);
-    }
+    const [target_name] = ns.args.length > 0 ? [ns.args[0] as string] : best_targets_uncached(ns, 1);
+    ns.print("Target: ", target_name);
+    ns.run('monitor.js', 1, target_name);
+
     ns.print("Calculating target threads");
-    const target_calculations: Array<TargetCalculation> = [];
-    for (const target of targets) {
-        const calculations = formulas ? await calculate_target_with_formulas(ns, target, hack_percentage) : await calculate_target_without_formulas(ns, target, hack_percentage);
-        ns.print("  ", calculations.name, " needs ", calculations.hack_threads, " hack threads, ", calculations.hack_weaken_threads, " hack weaken threads, ", calculations.grow_threads, " grow threads, ", calculations.grow_weaken_threads, " grow weaken threads, ", ns.formatNumber(calculations.grow_time / 1000), "s grow time, ", ns.formatNumber(calculations.hack_time / 1000), "s hack time, ", ns.formatNumber(calculations.weaken_time / 1000), "s weaken time.");
-        target_calculations.push(calculations);
-    }
-    // ns.exit();
-    const hwgw_ram = ns.getScriptRam('hwgw.js');
-    // let last_now = Date.now();
-    const home_ram = ns.getServerMaxRam('home');
-    // let launched_batches = 0;
-    const unprepared = new Map<string, number>();
-    const allowed_unprepared_cycles = 100;
+    let target!: TargetCalculation;
 
-    const port_handle = ns.getPortHandle(port);
-    port_handle.clear();
 
-    const skipped_servers = new Set<string>();
-    let found_server_with_ram = false;
-    let batch = 0;
+
 
     // Ensure every host has the right scripts and that they've all been run once so they get compiled into modules
     for (const server of rooted(cached_servers(ns))) {
@@ -170,106 +145,80 @@ export async function main(ns: NS): Promise<void> {
         ns.run(task);
     }
 
+
+    let batch = 0;
+    const batch_limit = 80000; // Avoid hitting the instance cap (around 400k instances)
+    const sleep_every = 2000;
+    let remaining_batches = batch_limit;
+    let final_pid = 0;
+    ns.print("Starting to loop against ", target_name);
+    await ns.sleep(100);
+    let recalculate = true;
     for (; ;) {
-        let all_prepared = true;
-        for (const target of target_calculations) {
-            const target_server = ns.getServer(target.name);
-            if (target_server.hackDifficulty == target_server.minDifficulty && target_server.moneyAvailable == target_server.moneyMax) {
-                unprepared.set(target.name, 0);
-                for (const server_name of target.server_ram_requirements.keys()) {
-                    const server_used_ram = ns.getServerUsedRam(server_name);
-                    const needed_ram = target.server_ram_requirements.get(server_name) || 0;
-                    const server = ns.getServer(server_name);
-
-                    const server_ram = server.maxRam - server_used_ram;
-                    if (server_ram < needed_ram && server_used_ram > 0) {
-                        // Skip servers that can't fit a full batch in
-                        if (!skipped_servers.has(server_name)) {
-                            skipped_servers.add(server_name);
-                            ns.print("Skipping ", server_name, " because it only has ", ns.formatRam(server_ram), " RAM available, but needs ", ns.formatRam(needed_ram), " RAM.");
-                        }
-                        continue;
-                    }
-                    // while (home_ram - ns.getServerUsedRam('home') < hwgw_ram) {
-                    //     await ns.sleep(5);
-                    // }
-                    const proportion = Math.min(1, server_ram / needed_ram);
-                    const hack_threads = Math.floor(target.hack_threads * proportion);
-                    const hack_weaken_threads = Math.floor(target.hack_weaken_threads * proportion);
-                    const grow_threads = Math.floor(target.grow_threads * proportion);
-                    const grow_weaken_threads = Math.floor(target.grow_weaken_threads * proportion);
-                    if (hack_threads > 0 && hack_weaken_threads > 0 && grow_threads > 0 && grow_weaken_threads > 0) {
-                        // eslint-disable-next-line no-constant-condition
-                        if (false) {
-                            await hwgw(ns, server_name, hack_threads, hack_weaken_threads, grow_threads, grow_weaken_threads, target.name, target.hack_time, target.grow_time, target.weaken_time, port, batch++);
-                        } else {
-                            const now = Date.now();
-                            const target_time = Math.floor((now + target.weaken_time) / 1000 + 10) * 1000;
-
-                            const ms = now % 1000;
-                            if (ms < 300 || ms > 700) {
-                                // This is to try to get the batches to start around the half second, as they're all due to complete on the second
-                                await ns.sleep(ms < 500 ? 300 - ms : 1300 - ms);
-                            }
-
-                            ns.exec('hack_once.js', server_name, { threads: hack_threads, temporary: true }, target.name, target_time, target.hack_time, port, batch);
-                            ns.exec('weaken_once.js', server_name, { threads: hack_weaken_threads, temporary: true }, target.name, target_time, target.weaken_time, port, batch);
-                            ns.exec('grow_once.js', server_name, { threads: grow_threads, temporary: true }, target.name, target_time, target.grow_time, port, batch);
-                            ns.exec('weaken_once.js', server_name, { threads: grow_weaken_threads, temporary: true }, target.name, target_time, target.weaken_time, port, batch);
-                            batch++;
-                        }
-                        found_server_with_ram = true;
-                    } else {
-                        if (!skipped_servers.has(server_name)) {
-                            skipped_servers.add(server_name);
-                            ns.print("Skipping ", server_name, " because it would have ", hack_threads, " hack threads, ", hack_weaken_threads, " hack weaken threads, ", grow_threads, " grow threads, ", grow_weaken_threads, " grow weaken threads.");
-                        }
-                    }
-                    // if (launched_batches % 1000 == 999) {
-                    //     ns.print("Launched ", launched_batches + 1, " batches");
-                    // }
-                    // launched_batches++;
-                }
-                await ns.sleep(1);
-            } else {
-                let cycles = unprepared.get(target.name) || 0;
-                if (cycles == allowed_unprepared_cycles || (cycles >= allowed_unprepared_cycles && cycles % 300000 == 0)) {
-                    // TODO: Instead of five minutes, check processes on all servers to see if any are affecting this server, and if not then try to reprep
-                    // Try to quickly reprep, and if that hasn't resolved in 5 minutes, try again
-                    ns.print("Target ", target.name, " has been unprepared for ", cycles, " cycles, starting to prepare.");
-                    await prepare_server(ns, target.name, target_calculations.length == 1); // Don't wait for the result if more than one server is being targeted
-                    if (target_calculations.length == 1) {
-                        ns.print(`Prepare finished for ${target.name}`);
-                        // As we waited for it to finish, we can assume it's now prepared and if not, restart prep immediately
-                        cycles = 0;
-                    }
-                }
-                unprepared.set(target.name, cycles + 1);
-                all_prepared = false;
+        if (ns.getServerSecurityLevel(target_name) > ns.getServerMinSecurityLevel(target_name) || ns.getServerMoneyAvailable(target_name) < ns.getServerMaxMoney(target_name)) {
+            const msg = `Target  ${target_name} isn't prepared: ${ns.getServerSecurityLevel(target_name)} : ${ns.getServerMoneyAvailable(target_name)}`;
+            ns.print(msg);
+            ns.write("a_completion_listener.txt", msg, 'a');
+            await prepare_server(ns, target_name, true);
+            recalculate = true;
+        }
+        if (recalculate) {
+            target = formulas ? await calculate_target_with_formulas(ns, target_name, hack_percentage) : await calculate_target_without_formulas(ns, target_name, hack_percentage);
+            ns.print("  ", target.name, " needs ", target.hack_threads, " hack threads, ", target.hack_weaken_threads, " hack weaken threads, ", target.grow_threads, " grow threads, ", target.grow_weaken_threads, " grow weaken threads, ", ns.formatNumber(target.grow_time / 1000), "s grow time, ", ns.formatNumber(target.hack_time / 1000), "s hack time, ", ns.formatNumber(target.weaken_time / 1000), "s weaken time.");
+            recalculate = false;
+        }
+        for (const server_name of target.server_ram_requirements.keys()) {
+            if (remaining_batches <= 0) {
+                break;
             }
+            ns.print("Queueing on ", server_name);
+            let server_batches = 0;
+            for (; ;) {
+                if (remaining_batches <= 0) {
+                    break;
+                }
+                const server_used_ram = ns.getServerUsedRam(server_name);
+                const needed_ram = target.server_ram_requirements.get(server_name) || 0;
+                const server = ns.getServer(server_name);
+                const server_ram = server.maxRam - server_used_ram;
+
+                const proportion = Math.min(1, server_ram / needed_ram);
+                const hack_threads = Math.floor(target.hack_threads * proportion);
+                const hack_weaken_threads = Math.floor(target.hack_weaken_threads * proportion);
+                const grow_threads = Math.floor(target.grow_threads * proportion);
+                const grow_weaken_threads = Math.floor(target.grow_weaken_threads * proportion);
+                if (hack_threads > 0 && hack_weaken_threads > 0 && grow_threads > 0 && grow_weaken_threads > 0) {
+                    ns.exec('hack_once.js', server_name, { threads: hack_threads, temporary: true }, target.name, target.weaken_time, target.hack_time, port, batch);
+                    ns.exec('weaken_once.js', server_name, { threads: hack_weaken_threads, temporary: true }, target.name, target.weaken_time, target.weaken_time, port, batch);
+                    ns.exec('grow_once.js', server_name, { threads: grow_threads, temporary: true }, target.name, target.weaken_time, target.grow_time, port, batch);
+                    final_pid = ns.exec('weaken_once.js', server_name, { threads: grow_weaken_threads, temporary: true }, target.name, target.weaken_time, target.weaken_time, port, batch);
+                    batch++;
+                    server_batches++;
+                    remaining_batches--;
+                    if (remaining_batches % sleep_every == 0) {
+                        ns.print("Sleeping after ", sleep_every, " batches queued");
+                        await ns.sleep(100);
+                    }
+                }
+                else {
+                    ns.print("Queued ", server_batches, " on ", server_name);
+                    break;
+                }
+            }
+
         }
-        if (!all_prepared) {
-            await ns.sleep(1);
+        remaining_batches = batch_limit;
+        if (batch == 0) {
+            ns.print("Not enough RAM to queue any partial batches, quitting.");
+            return;
         }
-        if (all_prepared && !found_server_with_ram) {
-            ns.print("Couldn't start even a partial batch on any server, so trying to just earn anything I can.");
-            const target = target_calculations[0];
-            const proportions = [target.hack_threads, target.hack_weaken_threads, target.grow_threads, target.grow_weaken_threads].map(x => 1 / x).sort((a, b) => b - a);
-            const proportion = proportions[0];
-            ns.print("Using proportion ", proportion);
-            const hack_threads = Math.ceil(target.hack_threads * proportion);
-            const hack_weaken_threads = Math.ceil(target.hack_weaken_threads * proportion);
-            const grow_threads = Math.ceil(target.grow_threads * proportion);
-            const grow_weaken_threads = Math.ceil(target.grow_weaken_threads * proportion);
-            await wait_for(ns, (await farm_out(ns, 'hack_once.js', hack_threads, target.name)).concat(await farm_out(ns, 'weaken_once.js', hack_weaken_threads, target.name)).concat(await farm_out(ns, 'grow_once.js', grow_threads, target.name)).concat(await farm_out(ns, 'weaken_once.js', grow_weaken_threads, target.name)));
-            await ns.sleep(1);
+        ns.print("Queued ", batch_limit - remaining_batches, " batches, used all RAM/instances, sleeping.");
+        await ns.sleep(1000);
+        while (ns.isRunning(final_pid)) {
+            await ns.sleep(1000);
         }
-        // const now = Date.now();
-        // await ns.sleep(Math.min(10, Math.max(0, now - last_now)));
-        // last_now = Date.now();
     }
 }
-
 
 // TODO: Align prepare so the grow and weaken threads complete (almost) together
 // TODO: Work out why only home is getting utilised
