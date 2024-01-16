@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { best_targets_uncached, cached_servers, farm_out, hwgw, rooted, wait_for } from "base";
+import { best_targets_uncached, cached_servers, farm_out, hwgw, prepare_server, rooted, wait_for } from "base";
 
 class TargetCalculation {
     name = '';
@@ -11,12 +11,6 @@ class TargetCalculation {
     hack_time!: number;
     weaken_time!: number;
     server_ram_requirements!: Map<string, number>;
-}
-
-async function calculate_target(ns: NS, target: string, hack_percentage: number): Promise<TargetCalculation> {
-    const calculations = ns.fileExists('Formulas.exe') ? await calculate_target_with_formulas(ns, target, hack_percentage) : await calculate_target_without_formulas(ns, target, hack_percentage);
-    ns.print("  ", calculations.name, " needs ", calculations.hack_threads, " hack threads, ", calculations.hack_weaken_threads, " hack weaken threads, ", calculations.grow_threads, " grow threads, ", calculations.grow_weaken_threads, " grow weaken threads, ", ns.formatNumber(calculations.grow_time/1000), "s grow time, ", ns.formatNumber(calculations.hack_time/1000), "s hack time, ", ns.formatNumber(calculations.weaken_time/1000), "s weaken time.");
-    return calculations;
 }
 
 async function calculate_target_with_formulas(ns: NS, target: string, hack_percentage: number): Promise<TargetCalculation> {
@@ -38,7 +32,13 @@ async function calculate_target_with_formulas(ns: NS, target: string, hack_perce
     const servers = rooted(cached_servers(ns));
     const server_ram_requirements: Map<string, number> = new Map<string, number>();
     for (const server of servers) {
-        server_ram_requirements.set(server, calculate_needed_ram(ns, server, hack_threads, hack_weaken_threads, grow_threads, grow_weaken_threads));
+        const needed = calculate_needed_ram(ns, server, hack_threads, hack_weaken_threads, grow_threads, grow_weaken_threads);
+        if (needed < ns.getServerMaxRam(server)) {
+            server_ram_requirements.set(server, needed);
+        } else {
+            ns.print("Not including ", server, " in calculations for ", target, " because it doesn't have enough RAM (", ns.formatRam(ns.getServerMaxRam(server)), "/", ns.formatRam(needed), ").");
+        }
+
     }
 
     const grow_time = ns.formulas.hacking.growTime(simulated_server, player);
@@ -120,55 +120,80 @@ export async function main(ns: NS): Promise<void> {
     const num_servers = ns.args.length > 0 ? ns.args[0] as number : 1;
     const hack_percentage = 0.3;
 
+    const formulas = ns.fileExists('Formulas.exe');
     const targets = best_targets_uncached(ns, num_servers);
     ns.print("Targets: ", targets.join(", "));
     ns.run('monitor.js', 1, ...targets);
-    const prepare_pids = [];
-    for (const target of targets) {
-        prepare_pids.push(ns.run("prepare.js", 1, target));
+    if (formulas) {
+        ns.print("Using formulas, skipping preparation");
+    } else {
+        const prepare_pids = [];
+        for (const target of targets) {
+            prepare_pids.push(ns.run("prepare.js", 1, target));
+        }
+        ns.print("Waiting for prepare to finish.");
+        await wait_for(ns, prepare_pids);
     }
-    ns.print("Waiting for prepare to finish.");
-    await wait_for(ns, prepare_pids);
     ns.print("Calculating target threads");
     const target_calculations: Array<TargetCalculation> = [];
     for (const target of targets) {
-        target_calculations.push(await calculate_target(ns, target, hack_percentage));
+        const calculations = formulas ? await calculate_target_with_formulas(ns, target, hack_percentage) : await calculate_target_without_formulas(ns, target, hack_percentage);
+        ns.print("  ", calculations.name, " needs ", calculations.hack_threads, " hack threads, ", calculations.hack_weaken_threads, " hack weaken threads, ", calculations.grow_threads, " grow threads, ", calculations.grow_weaken_threads, " grow weaken threads, ", ns.formatNumber(calculations.grow_time / 1000), "s grow time, ", ns.formatNumber(calculations.hack_time / 1000), "s hack time, ", ns.formatNumber(calculations.weaken_time / 1000), "s weaken time.");
+        target_calculations.push(calculations);
     }
     // ns.exit();
     const hwgw_ram = ns.getScriptRam('hwgw.js');
-    let last_now = Date.now();
+    // let last_now = Date.now();
     const home_ram = ns.getServerMaxRam('home');
-    let launched_batches = 0;
+    // let launched_batches = 0;
+    const unprepared = new Map<string, number>();
+    const allowed_unprepared_cycles = 100;
     for (; ;) {
+        let all_prepared = true;
         for (const target of target_calculations) {
-            for (const server_name of target.server_ram_requirements.keys()) {
-                const server_used_ram = ns.getServerUsedRam(server_name);
-                const needed_ram = target.server_ram_requirements.get(server_name) || 0;
-                const server = ns.getServer(server_name);
+            const target_server = ns.getServer(target.name);
+            if (target_server.hackDifficulty == target_server.minDifficulty && target_server.moneyAvailable == target_server.moneyMax) {
+                unprepared.set(target.name, 0);
+                for (const server_name of target.server_ram_requirements.keys()) {
+                    const server_used_ram = ns.getServerUsedRam(server_name);
+                    const needed_ram = target.server_ram_requirements.get(server_name) || 0;
+                    const server = ns.getServer(server_name);
 
-                const server_ram = server.maxRam - server_used_ram;
-                if (server_ram < needed_ram ) {
-                    // Skip servers that can't fit a full batch in
-                    continue;
+                    const server_ram = server.maxRam - server_used_ram;
+                    if (server_ram < needed_ram) {
+                        // Skip servers that can't fit a full batch in
+                        // ns.print("Skipping ", server_name, " because it only has ", ns.formatRam(server_ram), " RAM available, but needs ", ns.formatRam(needed_ram), " RAM.");
+                        continue;
+                    }
+                    while (home_ram - ns.getServerUsedRam('home') < hwgw_ram) {
+                        await ns.sleep(5);
+                    }
+                    await hwgw(ns, server_name, target.hack_threads, target.hack_weaken_threads, target.grow_threads, target.grow_weaken_threads, target.name, target.hack_time, target.grow_time, target.weaken_time);
+                    // if (launched_batches % 1000 == 999) {
+                    //     ns.print("Launched ", launched_batches + 1, " batches");
+                    // }
+                    // launched_batches++;
                 }
-                while (home_ram - ns.getServerUsedRam('home') < hwgw_ram) {
-                    await ns.sleep(5);
+                await ns.sleep(1);
+            } else {
+                const cycles = unprepared.get(target.name) || 0;
+                if (cycles == allowed_unprepared_cycles || (cycles >= allowed_unprepared_cycles && cycles % 300000 == 0)) {
+                    // Try to quickly reprep, and if that hasn't resolved in 5 minutes, try again
+                    ns.print("Target ", target.name, " has been unprepared for ", cycles, " cycles, starting to prepare.");
+                    await prepare_server(ns, target.name, false); // Don't wait for the result
                 }
-                await hwgw(ns, server_name, target.hack_threads, target.hack_weaken_threads, target.grow_threads, target.grow_weaken_threads, target.name, target.hack_time, target.grow_time, target.weaken_time);
-                if (launched_batches % 1000 == 999) {
-                    ns.print("Launched ", launched_batches + 1, " batches");
-                }
-                launched_batches++;
-                // await ns.sleep(1);
+                unprepared.set(target.name, cycles + 1);
+                all_prepared = false;
             }
+        }
+        if (!all_prepared) {
             await ns.sleep(1);
         }
-        const now = Date.now();
-        await ns.sleep(Math.min(10, Math.max(0, now - last_now)));
-        last_now = Date.now();
+        // const now = Date.now();
+        // await ns.sleep(Math.min(10, Math.max(0, now - last_now)));
+        // last_now = Date.now();
     }
 }
 
 
-// TODO: Align jobs so that they never start at the time another is finishing. Either time-aligning (all finish on even seconds/launch on odd seconds) or ns.portHandle().nextWrite() to ensure all four are launched not between other fours.
-// TODO: Launch the calculations in parallel
+// TODO: Align prepare so the grow and weaken threads complete (almost) together

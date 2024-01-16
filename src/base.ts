@@ -106,7 +106,7 @@ export function cached_server(ns: NS, name: string): Server | null {
 }
 
 export function best_targets_uncached(ns: NS, n: number): Array<string> {
-    const servers = find_servers(ns).filter(server => server.rooted);
+    const servers = find_servers(ns).filter(server => server.rooted && !server.mine);
     servers.sort((a, b) => b.hacking_score - a.hacking_score);
     return servers.slice(0, n).map(server => server.name);
 }
@@ -157,13 +157,13 @@ export async function wait_for(ns: NS, pids: Array<number>) {
     }
 }
 
-export async function prepare_server(ns: NS, target: string) {
+export async function prepare_server(ns: NS, target: string, wait = true) {
     ns.print("Preparing server ", target);
     const excess_security = ns.getServerSecurityLevel(target) - ns.getServerMinSecurityLevel(target);
     const weaken_security = 0.05;
     const weakens_needed = Math.ceil(excess_security / weaken_security);
     ns.print("  Weakening ", weakens_needed, " times for ", excess_security, " excess security");
-    await wait_for(ns, await farm_out(ns, 'weaken_once.js', weakens_needed, target));
+    const initial_weaken_pids = await farm_out(ns, 'weaken_once.js', weakens_needed, target);
     const current_money = ns.getServerMoneyAvailable(target);
     const max_money = ns.getServer(target).moneyMax || 0;
     const grow_proportion = current_money >= max_money ? 0 : max_money / current_money;
@@ -184,8 +184,13 @@ export async function prepare_server(ns: NS, target: string) {
         const grow_pids = await farm_out(ns, 'grow_once.js', grow_threads, target);
         ns.print("Weakening ", security_threads, " times for ", ns.formatNumber(grow_security), " security, with predicted effect ", ns.formatNumber(ns.weakenAnalyze(security_threads)));
         const security_pids = await farm_out(ns, 'weaken_once.js', security_threads, target);
-        await wait_for(ns, grow_pids);
-        await wait_for(ns, security_pids);
+        if (wait) {
+            await wait_for(ns, grow_pids);
+            await wait_for(ns, security_pids);
+        }
+    }
+    if (wait) {
+        await wait_for(ns, initial_weaken_pids);
     }
 }
 
