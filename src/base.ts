@@ -205,6 +205,10 @@ export async function hwgw(ns: NS, server: string, hack_threads: number, hack_we
 }
 
 export async function hgw_once(ns: NS, func: (target: string, options: BasicHGWOptions) => Promise<number>, port_text: string): Promise<void> {
+    if (ns.args.length < 1) {
+        ns.tprint("Usage: hgw_once.js target [target_end_time duration port batch]");
+        return;
+    }
     const target = ns.args[0] as string;
     let delay = 0;
     const script_start_time = 0;
@@ -232,9 +236,10 @@ export async function hgw_once(ns: NS, func: (target: string, options: BasicHGWO
         const port = ns.args[3] as number;
         const batch = ns.args[4] as number;
         const message = JSON.stringify({ what: port_text, target: target, delay: delay, duration: duration, completion: Date.now(), runner: ns.getHostname(), script_start_time: script_start_time, function_start_time: function_start_time, target_end_time: target_end_time, batch: batch });
-        if (ns.writePort(port, message)) {
-            // ns.print("Failed to write completion ", message);
-        }
+        ns.write("a_batch_completions.txt", `${message as string},\n`, 'a');
+        // if (ns.writePort(port, message)) {
+        //     // ns.print("Failed to write completion ", message);
+        // }
     }
 
 }

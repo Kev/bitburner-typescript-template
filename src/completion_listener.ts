@@ -13,7 +13,7 @@ export async function main(ns: NS): Promise<void> {
             await ns.sleep(10);
             continue;
         }
-        ns.write(filename, `${message as string},`, 'a');
+        ns.write(filename, `${message as string},\n`, 'a');
         const json = JSON.parse(message as string);
         // ns.print(`Received message: ${message}`);
         // { what: port_text, target: target, delay: delay, completion: Date.now(), runner: ns.getHostname(), script_start_time: script_start_time, function_start_time: function_start_time, target_end_time: target_end_time }

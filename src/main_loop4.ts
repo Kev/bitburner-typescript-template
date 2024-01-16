@@ -161,6 +161,15 @@ export async function main(ns: NS): Promise<void> {
     const skipped_servers = new Set<string>();
     let found_server_with_ram = false;
     let batch = 0;
+
+    // Ensure every host has the right scripts and that they've all been run once so they get compiled into modules
+    for (const server of rooted(cached_servers(ns))) {
+        ns.scp(['hack_once.js', 'weaken_once.js', 'grow_once.js', 'base.js'], server);
+    }
+    for (const task of ['hack_once.js', 'weaken_once.js', 'grow_once.js']) {
+        ns.run(task);
+    }
+
     for (; ;) {
         let all_prepared = true;
         for (const target of target_calculations) {
@@ -223,7 +232,7 @@ export async function main(ns: NS): Promise<void> {
                 }
                 await ns.sleep(1);
             } else {
-                const cycles = unprepared.get(target.name) || 0;
+                let cycles = unprepared.get(target.name) || 0;
                 if (cycles == allowed_unprepared_cycles || (cycles >= allowed_unprepared_cycles && cycles % 300000 == 0)) {
                     // TODO: Instead of five minutes, check processes on all servers to see if any are affecting this server, and if not then try to reprep
                     // Try to quickly reprep, and if that hasn't resolved in 5 minutes, try again
@@ -232,7 +241,7 @@ export async function main(ns: NS): Promise<void> {
                     if (target_calculations.length == 1) {
                         ns.print(`Prepare finished for ${target.name}`);
                         // As we waited for it to finish, we can assume it's now prepared and if not, restart prep immediately
-                        unprepared.set(target.name, 0);
+                        cycles = 0;
                     }
                 }
                 unprepared.set(target.name, cycles + 1);
