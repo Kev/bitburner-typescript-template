@@ -1,15 +1,16 @@
 import { NS } from '@ns'
 /** @param {NS} ns */
-export async function main(ns : NS) : Promise<void> {
+export async function main(ns: NS): Promise<void> {
     ns.disableLog('ALL');
     const ram = 8;
     const desired_ram: number = ns.args.length > 0 ? parseInt(ns.args[0] as string) : ns.getPurchasedServerMaxRam();
     let should_stop = false;
+    let last_server_count = 0;
     while (!should_stop) {
         should_stop = true;
         let i = 0;
         while (i < ns.getPurchasedServerLimit()) {
-            const name : string = "wondersheep-" + i;
+            const name: string = "wondersheep-" + i;
             ++i;
             // ns.print("Considering purchase of ", name);
             if (ns.serverExists(name)) {
@@ -29,7 +30,10 @@ export async function main(ns : NS) : Promise<void> {
             }
         }
         const servers = ns.getPurchasedServers();
-        ns.print("Servers = ", servers);
+        if (servers.length != last_server_count) {
+            ns.print("Servers = ", servers);
+            last_server_count = servers.length;
+        }
         for (const server of servers) {
             const current_ram = ns.getServerMaxRam(server);
             // const max_ram = ns.getPurchasedServerMaxRam();

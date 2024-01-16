@@ -106,6 +106,10 @@ export function cached_server(ns: NS, name: string): Server | null {
 }
 
 export function best_targets_uncached(ns: NS, n: number): Array<string> {
+    const hacking_level = ns.getHackingLevel();
+    if (n == 1 && hacking_level < 600) {
+        return [ns.getHackingLevel() >= 200 ? 'phantasy' : (hacking_level >= 20 ? 'joesguns' : 'n00dles')];
+    }
     const servers = find_servers(ns).filter(server => server.rooted && !server.mine);
     servers.sort((a, b) => b.hacking_score - a.hacking_score);
     return servers.slice(0, n).map(server => server.name);
@@ -121,8 +125,10 @@ export async function farm_out(ns: NS, script: string, threads: number, ...args:
     if (threads == 0) return [];
     for (const server of servers) {
         ns.scp(script, server);
+        ns.scp('base.js', server);
     }
     const pids: Array<number> = [];
+    // ns.print("Available servers: ", servers.join(", "));
     while (threads > 0) {
         for (const server of servers) {
             if (threads <= 0) {
@@ -131,7 +137,7 @@ export async function farm_out(ns: NS, script: string, threads: number, ...args:
             const server_ram = ns.getServerMaxRam(server) - ns.getServerUsedRam(server);
             const script_ram = ns.getScriptRam(script, server);
             const threads_to_use = Math.min(threads, Math.floor(server_ram / script_ram));
-            if (threads_to_use == 0) {
+            if (threads_to_use < 1) {
                 continue;
             }
             // ns.print("    Using ", threads_to_use, " threads on ", server, " at a RAM cost of ", ns.formatRam(threads_to_use * script_ram));
@@ -194,28 +200,43 @@ export async function prepare_server(ns: NS, target: string, wait = true) {
     }
 }
 
-export async function hwgw(ns: NS, server: string, hack_threads: number, hack_weaken_threads: number, grow_threads: number, grow_weaken_threads: number, target: string, hack_time: number, grow_time: number, weaken_time: number) {
-    ns.run('hwgw.js', 1, server, hack_threads, hack_weaken_threads, grow_threads, grow_weaken_threads, target, hack_time, grow_time, weaken_time);
+export async function hwgw(ns: NS, server: string, hack_threads: number, hack_weaken_threads: number, grow_threads: number, grow_weaken_threads: number, target: string, hack_time: number, grow_time: number, weaken_time: number, port: number, batch: number) {
+    ns.run('hwgw.js', 1, server, hack_threads, hack_weaken_threads, grow_threads, grow_weaken_threads, target, hack_time, grow_time, weaken_time, port, batch);
 }
 
 export async function hgw_once(ns: NS, func: (target: string, options: BasicHGWOptions) => Promise<number>, port_text: string): Promise<void> {
     const target = ns.args[0] as string;
     let delay = 0;
+    const script_start_time = 0;
+    let function_start_time = 0;
+    let target_end_time = 0;
+    let duration = 0;
     if (ns.args.length > 1) {
-        const target_time = ns.args[1] as number;
-        const duration = ns.args[2] as number;
-        const now = Date.now();
-        delay = target_time - now - duration;
+        target_end_time = ns.args[1] as number;
+        duration = ns.args[2] as number;
+        // All the tasks are being scheduled to finish on a round second, so start them on a half second to avoid starting in the middle of the HWGW completing when the sec/cash is off
+        // script_start_time = Date.now();
+        // const time_until_mid_second = 1500 - (script_start_time % 1000);
+        // if (time_until_mid_second > 0) {
+        //     await ns.sleep(time_until_mid_second);
+        // }
+        function_start_time = Date.now();
+        delay = target_end_time - function_start_time - duration;
         if (delay < 0) {
-            ns.alert("Delay is negative for " + target + ": " + delay as string + "\n" + "Current time is " + new Date(now).toISOString() + ", " + "target time is " + new Date(target_time).toISOString() + ", " + "duration is " + duration as string);
+            ns.alert("Delay is negative for " + target + ": " + delay as string + "\n" + "Current time is " + new Date(function_start_time).toISOString() + ", " + "target time is " + new Date(target_end_time).toISOString() + ", " + "duration is " + duration as string);
         }
     }
     const options = delay > 0 ? { 'additionalMsec': delay } : {};
     await func(target, options);
-    // const message = JSON.stringify({ 'what': port_text, 'target': target, 'delay': delay, completion: Date.now(), runner: ns.getHostname() });
-    // if (ns.writePort(1, message)) {
-    //     ns.print("Failed to write completion ", message);
-    // }
+    if (ns.args.length > 3) {
+        const port = ns.args[3] as number;
+        const batch = ns.args[4] as number;
+        const message = JSON.stringify({ what: port_text, target: target, delay: delay, duration: duration, completion: Date.now(), runner: ns.getHostname(), script_start_time: script_start_time, function_start_time: function_start_time, target_end_time: target_end_time, batch: batch });
+        if (ns.writePort(port, message)) {
+            // ns.print("Failed to write completion ", message);
+        }
+    }
+
 }
 
 
