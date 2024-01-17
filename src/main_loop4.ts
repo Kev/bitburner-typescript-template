@@ -93,6 +93,7 @@ async function calculate_target_without_formulas(ns: NS, target: string, hack_pe
     const weaken_time = ns.getWeakenTime(target);
 
     const servers = rooted(cached_servers(ns));
+    ns.print("  Calculating RAM requirements for ", servers.length, " servers: ", servers.join(", "));
     const server_ram_requirements: Map<string, number> = new Map<string, number>();
     for (const server of servers) {
         server_ram_requirements.set(server, calculate_needed_ram(ns, server, full_hack_threads, full_hack_weaken_threads, full_grow_threads, full_grow_weaken_threads));
@@ -119,6 +120,11 @@ function calculate_needed_ram(ns: NS, server: string, hack_threads: number, hack
 export async function main(ns: NS): Promise<void> {
     ns.disableLog('ALL');
     ns.tail();
+    const [screenX, screenY] = ns.ui.windowSize();
+    if (screenX == 3440 && screenY == 1349) {
+        ns.moveTail(2350, 285);
+        ns.resizeTail(900, 270);
+    }
 
     const port = ns.ps().filter(p => p.filename == 'main_loop4.js').length;
     ns.print("Using port ", port);
@@ -126,7 +132,6 @@ export async function main(ns: NS): Promise<void> {
     // const num_servers = ns.args.length > 0 ? ns.args[0] as number : 1;
     const hack_percentage = 0.3;
 
-    const formulas = ns.fileExists('Formulas.exe');
     const [target_name] = ns.args.length > 0 ? [ns.args[0] as string] : best_targets_uncached(ns, 1);
     ns.print("Target: ", target_name);
     ns.run('monitor.js', 1, target_name);
@@ -155,6 +160,7 @@ export async function main(ns: NS): Promise<void> {
     await ns.sleep(100);
     let recalculate = true;
     for (; ;) {
+        // TODO: Only reprep if I don't have formulas. Otherwise calculate a batch that self-prepares.
         if (ns.getServerSecurityLevel(target_name) > ns.getServerMinSecurityLevel(target_name) || ns.getServerMoneyAvailable(target_name) < ns.getServerMaxMoney(target_name)) {
             const msg = `Target  ${target_name} isn't prepared: ${ns.getServerSecurityLevel(target_name)} : ${ns.getServerMoneyAvailable(target_name)}`;
             ns.print(msg);
@@ -163,6 +169,7 @@ export async function main(ns: NS): Promise<void> {
             recalculate = true;
         }
         if (recalculate) {
+            const formulas = ns.fileExists('Formulas.exe');
             target = formulas ? await calculate_target_with_formulas(ns, target_name, hack_percentage) : await calculate_target_without_formulas(ns, target_name, hack_percentage);
             ns.print("  ", target.name, " needs ", target.hack_threads, " hack threads, ", target.hack_weaken_threads, " hack weaken threads, ", target.grow_threads, " grow threads, ", target.grow_weaken_threads, " grow weaken threads, ", ns.formatNumber(target.grow_time / 1000), "s grow time, ", ns.formatNumber(target.hack_time / 1000), "s hack time, ", ns.formatNumber(target.weaken_time / 1000), "s weaken time.");
             recalculate = false;
@@ -201,22 +208,22 @@ export async function main(ns: NS): Promise<void> {
                     }
                 }
                 else {
-                    ns.print("Queued ", server_batches, " on ", server_name);
+                    // ns.print("Queued ", server_batches, " on ", server_name);
                     break;
                 }
             }
 
         }
-        remaining_batches = batch_limit;
         if (batch == 0) {
             ns.print("Not enough RAM to queue any partial batches, quitting.");
             return;
         }
-        ns.print("Queued ", batch_limit - remaining_batches, " batches, used all RAM/instances, sleeping.");
-        await ns.sleep(1000);
+        ns.print(`Queued ${batch_limit - remaining_batches} batches, used all RAM/instances(), sleeping (estimated ${ns.formatNumber(target.weaken_time / 1000)}s).`);
+        remaining_batches = batch_limit;
         while (ns.isRunning(final_pid)) {
             await ns.sleep(1000);
         }
+        await ns.sleep(1000);
     }
 }
 

@@ -2,6 +2,12 @@ import { NS } from '@ns'
 /** @param {NS} ns */
 export async function main(ns: NS): Promise<void> {
     ns.disableLog('ALL');
+    ns.tail();
+    const [screenX, screenY] = ns.ui.windowSize();
+    if (screenX == 3440 && screenY == 1349) {
+        ns.moveTail(2350, 570);
+        ns.resizeTail(900, 270);
+    }
     const ram = 8;
     const desired_ram: number = ns.args.length > 0 ? parseInt(ns.args[0] as string) : ns.getPurchasedServerMaxRam();
     let should_stop = false;

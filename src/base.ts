@@ -207,10 +207,10 @@ export async function hgw_once(ns: NS, func: (target: string, options: BasicHGWO
     }
     const target = ns.args[0] as string;
     let delay = 0;
-    const now = Date.now();
-    ns.atExit(() => {
-        ns.write("a_completion_listener.txt", `${ns.pid} FINISHED ${port_text}->${target}@${ns.getHostname()} delay${delay} completed ${Date.now()} started ${now}\n`, 'a');
-    });
+    // const now = Date.now();
+    // ns.atExit(() => {
+    //     ns.write("a_completion_listener.txt", `${ns.pid} FINISHED ${port_text}->${target}@${ns.getHostname()} delay${delay} completed ${Date.now()} started ${now}\n`, 'a');
+    // });
     if (ns.args.length > 1) {
         const weaken_time = ns.args[1] as number;
         const duration = ns.args[2] as number;
@@ -219,7 +219,7 @@ export async function hgw_once(ns: NS, func: (target: string, options: BasicHGWO
             ns.alert("Delay is negative for " + target + ": " + delay as string);
         }
     }
-    ns.write("a_completion_listener.txt", `${ns.pid} STARTED  ${port_text}->${target}@${ns.getHostname()} delay${delay} started ${now}\n`, 'a');
+    // ns.write("a_completion_listener.txt", `${ns.pid} STARTED  ${port_text}->${target}@${ns.getHostname()} delay${delay} started ${now}\n`, 'a');
     const options = delay > 0 ? { 'additionalMsec': delay } : {};
     return func(target, options);
 }
