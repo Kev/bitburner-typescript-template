@@ -160,7 +160,8 @@ export async function main(ns: NS): Promise<void> {
     await ns.sleep(100);
     let recalculate = true;
     for (; ;) {
-        // TODO: Only reprep if I don't have formulas. Otherwise calculate a batch that self-prepares.
+        // TODO: Only reprep if I don't have formulas. Otherwise calculate a batch that self-prepares if I have enough RAM.
+        // TODO: If I have formulas, reevaluate the best target each iteration, and start prepping it async if there's a new one that's better (but not too often) until it's ready. Run batches against the previous server until new one is ready.
         if (ns.getServerSecurityLevel(target_name) > ns.getServerMinSecurityLevel(target_name) || ns.getServerMoneyAvailable(target_name) < ns.getServerMaxMoney(target_name)) {
             const msg = `Target  ${target_name} isn't prepared: ${ns.getServerSecurityLevel(target_name)} : ${ns.getServerMoneyAvailable(target_name)}`;
             ns.print(msg);
