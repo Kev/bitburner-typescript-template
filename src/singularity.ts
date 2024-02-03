@@ -19,6 +19,8 @@ export const function_sequence = [
   'hack',
 ];
 
+// TODO: Add buying hacknet nodes for netburners
+
 export class State {
   purchased_tor = false;
   servers: Map<string, Server> = new Map<string, Server>();
@@ -31,7 +33,7 @@ export function make_scripts(ns: NS) {
   for (let i = 0; i < function_sequence.length; i++) {
     const fn = function_sequence[i];
     const next_script = i + 1 < function_sequence.length ? `auto/${i + 1}.js` : 'auto/0.js';
-    ns.write(`auto/${i}.js`, `import { NS } from "@ns"; import {${fn}, get_state} from "../singularity"; export async function main(ns: NS): Promise<void> {
+    ns.write(`auto/${i}.js`, `import {${fn}, get_state, export_state} from "./singularity"; /** @param {NS} ns */export async function main(ns) {
       const state = get_state(ns); await ${fn}(ns, state);export_state(ns, state);ns.spawn('${next_script}', 1);}`, 'w');
   }
 }
@@ -40,7 +42,7 @@ export function get_state(ns: NS): State {
   return JSON.parse(ns.read('auto/state.txt'));
 }
 
-function export_state(ns: NS, state: State) {
+export function export_state(ns: NS, state: State) {
   ns.write('auto/state.txt', JSON.stringify(state), 'w');
 }
 
