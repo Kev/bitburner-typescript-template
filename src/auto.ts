@@ -3,5 +3,5 @@ import { make_scripts } from './singularity';
 
 export async function main(ns: NS): Promise<void> {
   make_scripts(ns);
-  ns.spawn('auto/0.js', 1);
+  ns.spawn('auto/0.js', { threads: 1, spawnDelay: 1 });
 }

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NS, Server } from '@ns';
-import { port_hacks, hack_security, prepare_server, wait_for } from './base';
+import { port_hacks, hack_security, prepare_server, wait_for, find_servers } from './base';
 export const function_sequence = [
   'world_end',
   'purchase_augmentations',
@@ -21,6 +21,13 @@ export const function_sequence = [
 
 // TODO: Add buying hacknet nodes for netburners
 
+interface StateInt {
+  purchased_tor: boolean;
+  servers: Map<string, Server>;
+  rooted: Array<string>;
+  hack_server: string;
+}
+
 export class State {
   purchased_tor = false;
   servers: Map<string, Server> = new Map<string, Server>();
@@ -28,18 +35,32 @@ export class State {
   hack_server = '';
 }
 
+
 export function make_scripts(ns: NS) {
-  export_state(ns, new State());
+  export_state(ns, {
+    purchased_tor: false,
+    servers: new Map<string, Server>(),
+    rooted: [],
+    hack_server: ''
+  });
   for (let i = 0; i < function_sequence.length; i++) {
     const fn = function_sequence[i];
     const next_script = i + 1 < function_sequence.length ? `auto/${i + 1}.js` : 'auto/0.js';
     ns.write(`auto/${i}.js`, `import {${fn}, get_state, export_state} from "./singularity"; /** @param {NS} ns */export async function main(ns) {
-      const state = get_state(ns); await ${fn}(ns, state);export_state(ns, state);ns.spawn('${next_script}', 1);}`, 'w');
+      ns.tprint("Running ${fn}");const state = get_state(ns); await ns.sleep(0); await ${fn}(ns, state);export_state(ns, state);ns.spawn('${next_script}', {threads : 1, spawnDelay: 1});}`, 'w');
   }
 }
 
 export function get_state(ns: NS): State {
-  return JSON.parse(ns.read('auto/state.txt'));
+  const json = JSON.parse(ns.read('auto/state.txt'));
+  const state_int = json as StateInt;
+  const state: State = new State();
+  state.purchased_tor = state_int.purchased_tor;
+  state.servers = new Map<string, Server>(Object.entries(state_int.servers));
+  state.rooted = state_int.rooted;
+  state.hack_server = state_int.hack_server;
+
+  return state;
 }
 
 export function export_state(ns: NS, state: State) {
@@ -67,7 +88,7 @@ export async function purchase_tor(ns: NS, state: State): Promise<void> {
 }
 
 export async function purchase_programs(ns: NS, state: State): Promise<void> {
-  if (!('purchased_tor' in state)) return;
+  if (!state.purchased_tor) return;
   for (const program of port_hacks) {
     if (!ns.fileExists(program)) {
       const cost = ns.singularity.getDarkwebProgramCost(program);
@@ -142,13 +163,23 @@ export async function spread(ns: NS, state: State): Promise<void> {
   state.servers.clear();
   const available_port_hacks: Array<string> = port_hacks.filter(port_hack => ns.fileExists(port_hack))
   const num_ports_possible: number = available_port_hacks.length;
+  let i = 0;
   while (to_scan.length > 0) {
+    i++;
+    if (i > 10000) {
+      // Something has gone terribly wrong
+      await ns.sleep(1000);
+    }
     const host: string = to_scan.pop() || '';
-    const adjacents: Array<string> = await ns.scan(host);
-    // TODO: Try to backdoor
+    if (state.servers.has(host)) {
+      continue;
+    }
     state.servers.set(host, ns.getServer(host));
+    const adjacents: Array<string> = ns.scan(host);
+    // TODO: Try to backdoor
+
     for (const adjacent of adjacents) {
-      if (adjacent in state.servers) {
+      if (state.servers.has(adjacent)) {
         continue;
       }
       if (!ns.hasRootAccess(adjacent)) {
@@ -172,13 +203,17 @@ export async function spread(ns: NS, state: State): Promise<void> {
         }
       }
       if (ns.hasRootAccess(adjacent)) {
-        to_scan.push(adjacent);
+        if (!(adjacent in to_scan)) {
+          to_scan.push(adjacent);
+        }
       } else {
         state.servers.set(adjacent, ns.getServer(adjacent));
       }
     }
+    await ns.sleep(0);
   }
   state.rooted = [...state.servers.keys()].filter(server => ns.hasRootAccess(server));
+  find_servers(ns); // TODO: Clear this out and avoid calling functions that need it
 }
 
 export async function work_for_factions(ns: NS, state: State): Promise<void> {
@@ -240,5 +275,5 @@ export async function prepare_hack_server(ns: NS, state: State): Promise<void> {
 
 
 export async function hack(ns: NS, state: State): Promise<void> {
-  await wait_for(ns, [ns.run('batcher.js', 1 )]);
+  await wait_for(ns, [ns.run('batcher.js', 1)]);
 }
