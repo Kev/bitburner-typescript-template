@@ -1,4 +1,5 @@
 import { NS } from '@ns'
+import { purchased_server_limit, purchased_server_ram_limit_gb } from './base';
 /** @param {NS} ns */
 export async function main(ns: NS): Promise<void> {
     ns.disableLog('ALL');
@@ -9,13 +10,13 @@ export async function main(ns: NS): Promise<void> {
         ns.resizeTail(900, 270);
     }
     const ram = 8;
-    const desired_ram: number = ns.args.length > 0 ? parseInt(ns.args[0] as string) : ns.getPurchasedServerMaxRam();
+    const desired_ram: number = ns.args.length > 0 ? parseInt(ns.args[0] as string) : purchased_server_ram_limit_gb;
     let should_stop = false;
     let last_server_count = 0;
     while (!should_stop) {
         should_stop = true;
         let i = 0;
-        while (i < ns.getPurchasedServerLimit()) {
+        while (i < purchased_server_limit) {
             const name: string = "wondersheep-" + i;
             ++i;
             // ns.print("Considering purchase of ", name);

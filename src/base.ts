@@ -2,6 +2,11 @@ import { BasicHGWOptions, NS } from "@ns";
 
 export const port_hacks = ['BruteSSH.exe', 'FTPCrack.exe', 'relaySMTP.exe', 'HTTPWorm.exe', 'SQLInject.exe'];
 export const faction_servers = ['CSEC', 'avmnite-02h', 'I.I.I.I', 'run4theh111z'];
+export const weaken_security = 0.05;
+export const hack_security = 0.002;
+export const grow_security = 0.004;
+export const purchased_server_limit = 25;
+export const purchased_server_ram_limit_gb = 2**20;
 
 export const colours = {
     black: "\u001b[30m",
@@ -165,13 +170,14 @@ export async function wait_for(ns: NS, pids: Array<number>) {
 
 export async function prepare_server(ns: NS, target: string, wait = true) {
     ns.print("Preparing server ", target);
-    const excess_security = ns.getServerSecurityLevel(target) - ns.getServerMinSecurityLevel(target);
+    const server = ns.getServer(target);
+    const excess_security = (server.hackDifficulty||0) - (server.minDifficulty||0);
     const weaken_security = 0.05;
     const weakens_needed = Math.ceil(excess_security / weaken_security);
     ns.print("  Weakening ", weakens_needed, " times for ", excess_security, " excess security");
     const initial_weaken_pids = await farm_out(ns, 'weaken_once.js', weakens_needed, target);
-    const current_money = ns.getServerMoneyAvailable(target);
-    const max_money = ns.getServer(target).moneyMax || 0;
+    const current_money = server.moneyAvailable||0;
+    const max_money = server.moneyMax || 0;
     const grow_proportion = current_money >= max_money ? 0 : max_money / current_money;
     ns.print("  Current money is ", ns.formatNumber(current_money), " and max money is ", ns.formatNumber(max_money), " so grow proportion is ", ns.formatNumber(grow_proportion));
     if (grow_proportion > 0) {
@@ -180,7 +186,7 @@ export async function prepare_server(ns: NS, target: string, wait = true) {
             await wait_for(ns, await farm_out(ns, 'grow_once.js', Infinity, target));
             ns.print("    Pre-growth complete, starting preparation again");
             await ns.sleep(10);
-            await prepare_server(ns, target);
+            await prepare_server(ns, target, wait);
             return;
         }
         const grow_threads = Math.ceil(ns.growthAnalyze(target, grow_proportion));
@@ -202,7 +208,7 @@ export async function prepare_server(ns: NS, target: string, wait = true) {
 
 export async function hgw_once(ns: NS, func: (target: string, options: BasicHGWOptions) => Promise<number>, port_text: string): Promise<number> {
     if (ns.args.length < 1) {
-        ns.tprint("Usage: hgw_once.js target [weaken_time task_duration port batch]");
+        ns.print("Usage: hgw_once.js target [weaken_time task_duration port batch]");
         return 0;
     }
     const target = ns.args[0] as string;
