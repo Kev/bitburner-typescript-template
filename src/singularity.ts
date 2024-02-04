@@ -2,6 +2,7 @@
 import { NS, Server } from '@ns';
 import { port_hacks, hack_security, prepare_server, wait_for, find_servers } from './base';
 export const function_sequence = [
+  'cache_player',
   'world_end',
   'purchase_augmentations',
   'install_augmentations',
@@ -26,6 +27,9 @@ interface StateInt {
   servers: Map<string, Server>;
   rooted: Array<string>;
   hack_server: string;
+  completed_factions: Array<string>;
+  joined_factions: Array<string>;
+  hack_level: number;
 }
 
 export class State {
@@ -33,6 +37,9 @@ export class State {
   servers: Map<string, Server> = new Map<string, Server>();
   rooted: Array<string> = [];
   hack_server = '';
+  completed_factions: Array<string> = [];
+  joined_factions: Array<string> = [];
+  hack_level = 0;
 }
 
 function export_only(ns: NS, fn: string) {
@@ -45,23 +52,27 @@ export function log(ns: NS, message: string) {
 }
 
 export function make_scripts(ns: NS) {
-  export_state(ns, {
-    purchased_tor: false,
-    servers: new Map<string, Server>(),
-    rooted: [],
-    hack_server: ''
-  });
   export_only(ns, 'make_scripts');
   for (let i = 0; i < function_sequence.length; i++) {
     const fn = function_sequence[i];
-        const next_script = i + 1 < function_sequence.length ? `auto/${i + 1}.js` : 'auto/0.js';
+    const next_script = i + 1 < function_sequence.length ? `auto/${i + 1}.js` : 'auto/0.js';
     ns.write(`auto/${i}.js`, `import {${fn}, get_state, export_state, log} from "./singularity"; /** @param {NS} ns */export async function main(ns) {
       log(ns, "Running ${fn}");const state = get_state(ns); await ns.sleep(0); await ${fn}(ns, state);export_state(ns, state);ns.spawn('${next_script}', {threads : 1, spawnDelay: 1});}`, 'w');
     export_only(ns, fn);
   }
+  const player = ns.getPlayer();
+  const hack_level = player.skills.hacking;
+  const state = get_state(ns);
+  if (hack_level < state.hack_level) {
+    // If hacking goes down, it means an install and things need calculating from scratch
+    export_state(ns, new State());
+  }
 }
 
 export function get_state(ns: NS): State {
+  if (!ns.fileExists('auto/state.txt')) {
+    return new State();
+  }
   const json = JSON.parse(ns.read('auto/state.txt'));
   const state_int = json as StateInt;
   const state: State = state_int;
@@ -80,16 +91,63 @@ export function export_state(ns: NS, state: State) {
   ns.write('auto/state.txt', str, 'w');
 }
 
+export async function cache_player(ns: NS, state: State): Promise<void> {
+  state.joined_factions = ns.getPlayer().factions;
+}
+
 export async function world_end(ns: NS, state: State): Promise<void> {
   // TODO
 }
 
+const augs_before_install = 7;
+
 export async function purchase_augmentations(ns: NS, state: State): Promise<void> {
-  // TODO
+  const all_augs = ns.singularity.getOwnedAugmentations(true);
+  const installed_augs = ns.singularity.getOwnedAugmentations(false);
+  const uninstalled_augs = all_augs.filter(aug => !installed_augs.includes(aug));
+  const candidates: Array<string> = [];
+  const cash = ns.getServerMoneyAvailable('home');
+  const factions = new Map<string, string>();
+  let bought = true;
+  while (bought) {
+    // Loop so that if I bought something I can have another loop to buy higher tiers of the same aug
+    bought = false;
+    for (const faction of state.joined_factions) {
+      for (const augment of ns.singularity.getAugmentationsFromFaction(faction)) {
+        if (!all_augs.includes(augment) && !candidates.includes(augment)) {
+          if (ns.singularity.getAugmentationBasePrice(augment) <= cash && ns.singularity.getAugmentationRepReq(augment) <= ns.singularity.getFactionRep(faction)) {
+
+            candidates.push(augment);
+            factions.set(augment, faction);
+          }
+        }
+      }
+    }
+    if (candidates.length + uninstalled_augs.length > augs_before_install) {
+      // Hold off installing any until we've got the rep and cash to buy enough, to avoid where I buy a cheap one and set the multiplier for ane expensive one
+      candidates.sort((a, b) => ns.singularity.getAugmentationBasePrice(b) - ns.singularity.getAugmentationBasePrice(a));
+      while (candidates.length > 0 && ns.singularity.getAugmentationPrice(candidates[0]) <= ns.getServerMoneyAvailable('home')) {
+        const candidate = candidates.pop() || '';
+        if (ns.singularity.purchaseAugmentation(factions.get(candidate) || '', candidate)) {
+          log(ns, `Purchased ${candidate}`);
+          bought = true;
+        } else {
+          log(ns, `Failed to purchase ${candidate}`);
+        }
+      }
+    }
+  }
+  // TODO: Donate to factions to get rep where it would unlock further augs
 }
 
 export async function install_augmentations(ns: NS, state: State): Promise<void> {
-  // TODO
+  const all_augs = ns.singularity.getOwnedAugmentations(true);
+  const installed_augs = ns.singularity.getOwnedAugmentations(false);
+  const uninstalled_augs = all_augs.filter(aug => !installed_augs.includes(aug));
+  if (uninstalled_augs.length > augs_before_install) {
+    ns.singularity.exportGame();
+    ns.singularity.installAugmentations('auto.js');
+  }
 }
 
 export async function purchase_tor(ns: NS, state: State): Promise<void> {
@@ -165,6 +223,7 @@ export async function join_factions(ns: NS, state: State): Promise<void> {
   // All factions that should be autojoined, join
   for (const faction of ns.singularity.checkFactionInvitations()) {
     ns.singularity.joinFaction(faction);
+    state.joined_factions.push(faction);
     log(ns, `Joined ${faction}`);
   }
   // TODO before this, travel to an appropriate city based on needing Tian Di Hui, or city factions
