@@ -130,8 +130,13 @@ function calculate_needed_ram(ns: NS, server: string, hack_threads: number, hack
 }
 
 export async function main(ns: NS): Promise<void> {
+    ns.disableLog('ALL');
     const hack_percentage = 0.3;
     const state: State = get_state(ns);
+    // while (!state.hack_server) {
+    //     ns.tprint("No hack server set, aborting.");
+    //     await ns.sleep(100000);
+    // }
 
     let target!: TargetCalculation;
     const port = 1; // I don't need this any more, but don't want to break old scripts by changing API to not include it
@@ -224,7 +229,7 @@ export async function main(ns: NS): Promise<void> {
 
         }
         if (batch == 0) {
-            ns.print("Not enough RAM to queue any partial batches, trying to farm out.");
+            ns.print("Not enough RAM to queue any partial batches against ", target.name, ", trying to farm out.");
             await farm_out(ns, 'hack_once.js', target.hack_threads, target.name);
             await farm_out(ns, 'grow_once.js', target.grow_threads, target.name);
             const pids = await farm_out(ns, 'weaken_once.js', target.grow_weaken_threads + target.hack_weaken_threads, target.name);

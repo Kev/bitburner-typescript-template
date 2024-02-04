@@ -2,6 +2,25 @@ import { NS } from "@ns";
 import { make_scripts } from './singularity';
 
 export async function main(ns: NS): Promise<void> {
+  ns.disableLog('ALL');
+  ns.tail();
   make_scripts(ns);
-  ns.spawn('auto/0.js', { threads: 1, spawnDelay: 1 });
+  const pid = ns.run('auto/0.js');
+  ns.atExit(() => {
+    const processes = ns.ps();
+    for (const process of processes) {
+      if (process.filename.startsWith('auto/') || process.filename === 'batcher.js') {
+        ns.kill(process.pid);
+      }
+    }
+    ns.kill(pid);
+  });
+  for (;;) {
+    await ns.getPortHandle(2).nextWrite();
+    let message = ns.readPort(2);
+    while (message != 'NULL PORT DATA') {
+      ns.print(message);
+      message = ns.readPort(2);
+    }
+  }
 }

@@ -35,6 +35,14 @@ export class State {
   hack_server = '';
 }
 
+function export_only(ns: NS, fn: string) {
+  ns.write(`auto/only_${fn}.js`, `import {${fn}, get_state, export_state} from "./singularity"; /** @param {NS} ns */export async function main(ns) {
+      ns.print("Running only ${fn}");const state = get_state(ns); await ${fn}(ns, state);export_state(ns, state);}`, 'w');
+}
+
+export function log(ns: NS, message: string) {
+  ns.writePort(2, message);
+}
 
 export function make_scripts(ns: NS) {
   export_state(ns, {
@@ -43,28 +51,33 @@ export function make_scripts(ns: NS) {
     rooted: [],
     hack_server: ''
   });
+  export_only(ns, 'make_scripts');
   for (let i = 0; i < function_sequence.length; i++) {
     const fn = function_sequence[i];
-    const next_script = i + 1 < function_sequence.length ? `auto/${i + 1}.js` : 'auto/0.js';
-    ns.write(`auto/${i}.js`, `import {${fn}, get_state, export_state} from "./singularity"; /** @param {NS} ns */export async function main(ns) {
-      ns.tprint("Running ${fn}");const state = get_state(ns); await ns.sleep(0); await ${fn}(ns, state);export_state(ns, state);ns.spawn('${next_script}', {threads : 1, spawnDelay: 1});}`, 'w');
+        const next_script = i + 1 < function_sequence.length ? `auto/${i + 1}.js` : 'auto/0.js';
+    ns.write(`auto/${i}.js`, `import {${fn}, get_state, export_state, log} from "./singularity"; /** @param {NS} ns */export async function main(ns) {
+      log(ns, "Running ${fn}");const state = get_state(ns); await ns.sleep(0); await ${fn}(ns, state);export_state(ns, state);ns.spawn('${next_script}', {threads : 1, spawnDelay: 1});}`, 'w');
+    export_only(ns, fn);
   }
 }
 
 export function get_state(ns: NS): State {
   const json = JSON.parse(ns.read('auto/state.txt'));
   const state_int = json as StateInt;
-  const state: State = new State();
-  state.purchased_tor = state_int.purchased_tor;
-  state.servers = new Map<string, Server>(Object.entries(state_int.servers));
-  state.rooted = state_int.rooted;
-  state.hack_server = state_int.hack_server;
+  const state: State = state_int;
+  state.servers = new Map<string, Server>(Object.entries(json['servers']));
 
   return state;
 }
 
 export function export_state(ns: NS, state: State) {
-  ns.write('auto/state.txt', JSON.stringify(state), 'w');
+  const servers = state.servers;
+  // Go through this dance because Map gets silently converted to an empty object,
+  // And I'm not JS/TS-smart enough to fix that in a cleaner way.
+  const copied_state = JSON.parse(JSON.stringify(state));
+  copied_state['servers'] = Object.fromEntries(servers);
+  const str = JSON.stringify(copied_state);
+  ns.write('auto/state.txt', str, 'w');
 }
 
 export async function world_end(ns: NS, state: State): Promise<void> {
@@ -83,7 +96,7 @@ export async function purchase_tor(ns: NS, state: State): Promise<void> {
   if (state.purchased_tor) return;
   if (ns.singularity.purchaseTor()) {
     state.purchased_tor = true;
-    ns.tprint("Purchased Tor");
+    log(ns, "Purchased Tor");
   }
 }
 
@@ -94,7 +107,7 @@ export async function purchase_programs(ns: NS, state: State): Promise<void> {
       const cost = ns.singularity.getDarkwebProgramCost(program);
       if (cost <= ns.getServerMoneyAvailable('home')) {
         ns.singularity.purchaseProgram(program);
-        ns.tprint("Purchased ", program);
+        log(ns, `Purchased  ${program}`);
       }
     }
   }
@@ -102,7 +115,7 @@ export async function purchase_programs(ns: NS, state: State): Promise<void> {
 
 export async function upgrade_home_ram(ns: NS, state: State): Promise<void> {
   if (ns.singularity.upgradeHomeRam()) {
-    ns.tprint("Upgraded home RAM to ", ns.formatRam(ns.getServerMaxRam('home')));
+    log(ns, `Upgraded home RAM to ${ns.formatRam(ns.getServerMaxRam('home'))}`);
   }
 }
 
@@ -118,7 +131,7 @@ export async function purchase_servers(ns: NS, state: State): Promise<void> {
     const cash = ns.getServerMoneyAvailable("home");
     const cost = ns.getPurchasedServerCost(initial_ram);
     if (cash > cost) {
-      ns.tprint("Purchasing ", name);
+      log(ns, `Purchasing ${name}`);
       ns.purchaseServer(name, initial_ram);
     }
   }
@@ -140,7 +153,7 @@ export async function upgrade_servers(ns: NS, state: State): Promise<void> {
         continue;
       }
       if (upgrade_cost < ns.getServerMoneyAvailable("home")) {
-        ns.tprint("Buying ", ns.formatRam(current_ram * 2), " for ", server);
+        log(ns, `Buying ${ns.formatRam(current_ram * 2)} for ${server}`);
         ns.upgradePurchasedServer(server, current_ram * 2);
         should_stop = false
       }
@@ -152,7 +165,7 @@ export async function join_factions(ns: NS, state: State): Promise<void> {
   // All factions that should be autojoined, join
   for (const faction of ns.singularity.checkFactionInvitations()) {
     ns.singularity.joinFaction(faction);
-    ns.tprint("Joined ", faction);
+    log(ns, `Joined ${faction}`);
   }
   // TODO before this, travel to an appropriate city based on needing Tian Di Hui, or city factions
 }
@@ -174,9 +187,14 @@ export async function spread(ns: NS, state: State): Promise<void> {
     if (state.servers.has(host)) {
       continue;
     }
-    state.servers.set(host, ns.getServer(host));
+    const server = ns.getServer(host);
+    state.servers.set(host, server);
     const adjacents: Array<string> = ns.scan(host);
-    // TODO: Try to backdoor
+
+    if (!server.backdoorInstalled) {
+      // await ns.singularity.installBackdoor();
+      // TODO: Install backdoors
+    }
 
     for (const adjacent of adjacents) {
       if (state.servers.has(adjacent)) {
@@ -213,6 +231,7 @@ export async function spread(ns: NS, state: State): Promise<void> {
     await ns.sleep(0);
   }
   state.rooted = [...state.servers.keys()].filter(server => ns.hasRootAccess(server));
+  log(ns, `After spreading,  ${state.servers.size} servers`);
   find_servers(ns); // TODO: Clear this out and avoid calling functions that need it
 }
 
@@ -267,6 +286,7 @@ export async function choose_hack_server(ns: NS, state: State): Promise<void> {
     }
   }
   state.hack_server = best;
+  log(ns, `Chose ${best} as hack server with ${ns.getHackingLevel()} hacking level`);
 }
 
 export async function prepare_hack_server(ns: NS, state: State): Promise<void> {
