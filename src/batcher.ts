@@ -184,7 +184,7 @@ export async function main(ns: NS): Promise<void> {
         }
 
         const mutable_calculation_player = ns.getPlayer();
-
+        const pids: Array<number> = [];
         for (const server_name of target.server_ram_requirements.keys()) {
             if (remaining_batches <= 0) {
                 break;
@@ -211,10 +211,11 @@ export async function main(ns: NS): Promise<void> {
                 const grow_threads = Math.floor(target.grow_threads * proportion);
                 const grow_weaken_threads = Math.floor(target.grow_weaken_threads * proportion);
                 if (hack_threads > 0 && hack_weaken_threads > 0 && grow_threads > 0 && grow_weaken_threads > 0) {
-                    ns.exec('hack_once.js', server_name, { threads: hack_threads, temporary: true }, target.name, target.weaken_time, target.hack_time, port, batch);
-                    ns.exec('weaken_once.js', server_name, { threads: hack_weaken_threads, temporary: true }, target.name, target.weaken_time, target.weaken_time, port, batch);
-                    ns.exec('grow_once.js', server_name, { threads: grow_threads, temporary: true }, target.name, target.weaken_time, target.grow_time, port, batch);
+                    pids.push(ns.exec('hack_once.js', server_name, { threads: hack_threads, temporary: true }, target.name, target.weaken_time, target.hack_time, port, batch));
+                    pids.push(ns.exec('weaken_once.js', server_name, { threads: hack_weaken_threads, temporary: true }, target.name, target.weaken_time, target.weaken_time, port, batch));
+                    pids.push(ns.exec('grow_once.js', server_name, { threads: grow_threads, temporary: true }, target.name, target.weaken_time, target.grow_time, port, batch));
                     final_pid = ns.exec('weaken_once.js', server_name, { threads: grow_weaken_threads, temporary: true }, target.name, target.weaken_time, target.weaken_time, port, batch);
+                    pids.push(final_pid);
                     batch++;
                     remaining_batches--;
                     if (remaining_batches % sleep_every == 0) {
@@ -240,6 +241,7 @@ export async function main(ns: NS): Promise<void> {
         while (ns.isRunning(final_pid)) {
             await ns.sleep(1000);
         }
+        await wait_for(ns, pids);
         await ns.sleep(1000);
         const hack_skill = ns.getHackingLevel();
         // Perform various checks to see if we should return control to the auto scripts

@@ -16,11 +16,11 @@ export async function main(ns: NS): Promise<void> {
     ns.kill(pid);
   });
   for (;;) {
-    await ns.getPortHandle(2).nextWrite();
     let message = ns.readPort(2);
     while (message != 'NULL PORT DATA') {
       ns.print(message);
       message = ns.readPort(2);
     }
+    await ns.sleep(100);
   }
 }

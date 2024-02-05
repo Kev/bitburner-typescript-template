@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NS, Server } from '@ns';
-import { port_hacks, hack_security, prepare_server, wait_for, find_servers } from './base';
+import { port_hacks, hack_security, prepare_server, wait_for, find_servers, faction_servers } from './base';
 export const function_sequence = [
   'cache_player',
   'world_end',
@@ -236,6 +236,8 @@ export async function spread(ns: NS, state: State): Promise<void> {
   const available_port_hacks: Array<string> = port_hacks.filter(port_hack => ns.fileExists(port_hack))
   const num_ports_possible: number = available_port_hacks.length;
   let i = 0;
+  const paths = new Map<string, Array<string>>();
+  paths.set('home', ['home']);
   while (to_scan.length > 0) {
     i++;
     if (i > 10000) {
@@ -250,9 +252,15 @@ export async function spread(ns: NS, state: State): Promise<void> {
     state.servers.set(host, server);
     const adjacents: Array<string> = ns.scan(host);
 
-    if (!server.backdoorInstalled) {
-      // await ns.singularity.installBackdoor();
-      // TODO: Install backdoors
+    if (!server.backdoorInstalled && (server.requiredHackingSkill || 999999999999999) < ns.getHackingLevel() && faction_servers.includes(host)) {
+      for (const part of paths.get(host) || []) {
+        ns.singularity.connect(part);
+      }
+      await ns.singularity.installBackdoor();
+      for (const part of paths.get(host)?.reverse() || []) {
+        ns.singularity.connect(part);
+      }
+
     }
 
     for (const adjacent of adjacents) {
@@ -282,6 +290,7 @@ export async function spread(ns: NS, state: State): Promise<void> {
       if (ns.hasRootAccess(adjacent)) {
         if (!(adjacent in to_scan)) {
           to_scan.push(adjacent);
+          paths.set(adjacent, [...paths.get(host) || [], adjacent]);
         }
       } else {
         state.servers.set(adjacent, ns.getServer(adjacent));
