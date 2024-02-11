@@ -3,7 +3,7 @@ import { cached_servers, prepare_server, rooted } from "./base";
 
 export async function main(ns: NS): Promise<void> {
     ns.disableLog("ALL");
-    await prepare_server(ns, 'joesguns');
+    await prepare_server(ns, 'joesguns', true);
     const pids: Array<number> = [];
     for (const server of rooted(cached_servers(ns))) {
         const ram = ns.getServerMaxRam(server) - ns.getServerUsedRam(server);

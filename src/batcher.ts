@@ -131,6 +131,7 @@ function calculate_needed_ram(ns: NS, server: string, hack_threads: number, hack
 
 export async function main(ns: NS): Promise<void> {
     ns.disableLog('ALL');
+    // ns.tail();
     const hack_percentage = 0.3;
     const state: State = get_state(ns);
     // while (!state.hack_server) {
@@ -185,6 +186,7 @@ export async function main(ns: NS): Promise<void> {
 
         const mutable_calculation_player = ns.getPlayer();
         const pids: Array<number> = [];
+        let some_partials = false;
         for (const server_name of target.server_ram_requirements.keys()) {
             if (remaining_batches <= 0) {
                 break;
@@ -206,15 +208,51 @@ export async function main(ns: NS): Promise<void> {
                 const server_ram = server.maxRam - server_used_ram;
 
                 const proportion = Math.min(1, server_ram / needed_ram);
+                if (proportion < 1) {
+                    some_partials = true;
+                }
                 const hack_threads = Math.floor(target.hack_threads * proportion);
-                const hack_weaken_threads = Math.floor(target.hack_weaken_threads * proportion);
-                const grow_threads = Math.floor(target.grow_threads * proportion);
-                const grow_weaken_threads = Math.floor(target.grow_weaken_threads * proportion);
+                let hack_weaken_threads = Math.floor(target.hack_weaken_threads * proportion);
+                let grow_threads = Math.floor(target.grow_threads * proportion);
+                let grow_weaken_threads = Math.floor(target.grow_weaken_threads * proportion);
+                if (ns.getScriptRam('hack_once.js', server_name) * hack_threads + ns.getScriptRam('weaken_once.js', server_name) * (hack_weaken_threads + grow_weaken_threads + 1) + ns.getScriptRam('grow_once.js', server_name) * grow_threads < server_ram) {
+                    grow_weaken_threads++; // Try to fit an extra weaken in to reduce the number of cases where it under-weakens
+                }
+                if (ns.getScriptRam('hack_once.js', server_name) * hack_threads + ns.getScriptRam('weaken_once.js', server_name) * (hack_weaken_threads + grow_weaken_threads) + ns.getScriptRam('grow_once.js', server_name) * (grow_threads + 1) < server_ram) {
+                    grow_threads++; // Try to fit an extra grow in to reduce the number of cases where it under-weakens
+                }
+                if (ns.getScriptRam('hack_once.js', server_name) * hack_threads + ns.getScriptRam('weaken_once.js', server_name) * (hack_weaken_threads + grow_weaken_threads + 1) + ns.getScriptRam('grow_once.js', server_name) * grow_threads < server_ram) {
+                    hack_weaken_threads++; // Try to fit an extra weaken in to reduce the number of cases where it under-weakens
+                }
+                const log_failure = (job: string, threads: number) => {
+                    const proportion_ram = ns.getScriptRam('hack_once.js', server_name) * hack_threads + ns.getScriptRam('weaken_once.js', server_name) * (hack_weaken_threads + grow_weaken_threads) + ns.getScriptRam('grow_once.js', server_name) * grow_threads;
+                    ns.print(`Failed to queue ${job}*${threads} on  ${server_name} for batch ${batch} against ${target.name}. Total needed RAM ${ns.formatRam(needed_ram)}, server has available ${ns.formatRam(server_ram)}, so hacking with ${proportion} for ${hack_threads}:${hack_weaken_threads}:${grow_threads}:${grow_weaken_threads} threads for a total of ${ns.formatRam(proportion_ram)} (aimed for ${ns.formatRam(proportion*needed_ram)}). Hack costs ${ns.formatRam(ns.getScriptRam('hack_once.js', server_name))}, weaken costs ${ns.formatRam(ns.getScriptRam('weaken_once.js', server_name))}, grow costs ${ns.formatRam(ns.getScriptRam('grow_once.js', server_name))} each thread.`);
+                };
                 if (hack_threads > 0 && hack_weaken_threads > 0 && grow_threads > 0 && grow_weaken_threads > 0) {
-                    pids.push(ns.exec('hack_once.js', server_name, { threads: hack_threads, temporary: true }, target.name, target.weaken_time, target.hack_time, port, batch));
-                    pids.push(ns.exec('weaken_once.js', server_name, { threads: hack_weaken_threads, temporary: true }, target.name, target.weaken_time, target.weaken_time, port, batch));
-                    pids.push(ns.exec('grow_once.js', server_name, { threads: grow_threads, temporary: true }, target.name, target.weaken_time, target.grow_time, port, batch));
+                    const hack_pid = ns.exec('hack_once.js', server_name, { threads: hack_threads, temporary: true }, target.name, target.weaken_time, target.hack_time, port, batch);
+                    if (!hack_pid) {
+                        log_failure("hack", hack_threads);
+                        break;
+                    }
+                    pids.push(hack_pid);
+                    const hack_weaken_pid = ns.exec('weaken_once.js', server_name, { threads: hack_weaken_threads, temporary: true }, target.name, target.weaken_time, target.weaken_time, port, batch);
+                    if (!hack_weaken_pid) {
+                        log_failure("hack_weaken", hack_weaken_threads);
+                        break;
+                    }
+                    pids.push(hack_weaken_pid);
+                    const grow_pid = ns.exec('grow_once.js', server_name, { threads: grow_threads, temporary: true }, target.name, target.weaken_time, target.grow_time, port, batch);
+                    if (!grow_pid) {
+                        log_failure("grow", grow_threads);
+                        break;
+                    }
+                    pids.push(grow_pid);
                     final_pid = ns.exec('weaken_once.js', server_name, { threads: grow_weaken_threads, temporary: true }, target.name, target.weaken_time, target.weaken_time, port, batch);
+                    if (!final_pid) {
+                        log_failure("grow_weaken", grow_weaken_threads);
+                        break;
+                    }
+                    // ns.tprint(`  Queued ${hack_threads} hack threads, ${hack_weaken_threads} hack weaken threads, ${grow_threads} grow threads, ${grow_weaken_threads} grow weaken threads on ${server_name} for batch ${batch} against ${target.name}`);
                     pids.push(final_pid);
                     batch++;
                     remaining_batches--;
@@ -235,6 +273,22 @@ export async function main(ns: NS): Promise<void> {
             await farm_out(ns, 'grow_once.js', target.grow_threads, target.name);
             const pids = await farm_out(ns, 'weaken_once.js', target.grow_weaken_threads + target.hack_weaken_threads, target.name);
             final_pid = pids[pids.length - 1];
+        }
+        if (some_partials) {
+            ns.print("Some partial batches queued, flooding weakens everywhere else");
+            for (const server_name of target.server_ram_requirements.keys()) {
+                const server_used_ram = ns.getServerUsedRam(server_name);
+                const server = ns.getServer(server_name);
+                const server_ram = server.maxRam - server_used_ram;
+                if (server_ram > 0) {
+                const weaken_ram = ns.getScriptRam('weaken_once.js', server_name);
+                    const weaken_threads = Math.floor(server_ram / weaken_ram);
+                    if (weaken_threads >= 1 && weaken_threads != Infinity) {
+                        pids.push(ns.exec('weaken_once.js', server_name, { threads: weaken_threads, temporary: true }, target.name, target.weaken_time, target.weaken_time, port, batch));
+                        ns.print(`  Queued ${weaken_threads} weaken threads on ${server_name} against ${target.name} as partial-batch insurance`);
+                    }
+                }
+            }
         }
         ns.print(`Queued ${batch_limit - remaining_batches} batches, used all RAM/instances(), sleeping (estimated ${ns.formatNumber(target.weaken_time / 1000)}s).`);
         remaining_batches = batch_limit;
