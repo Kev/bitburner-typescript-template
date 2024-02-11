@@ -35,6 +35,7 @@ interface StateInt {
   working_for: string;
   force_install: boolean;
   world: string;
+  hack_server_iterations: number;
 }
 
 export class State {
@@ -48,6 +49,7 @@ export class State {
   working_for = '';
   force_install = false;
   world = '';
+  hack_server_iterations = 0;
 }
 
 function export_only(ns: NS, fn: string) {
@@ -552,7 +554,14 @@ export async function choose_hack_server(ns: NS, state: State): Promise<void> {
       best = 'n00dles';
     }
   }
-  state.hack_server = best;
+
+  if (state.hack_server === '' || state.hack_server === best || state.hack_server_iterations > 10) {
+    if (state.hack_server !== best) {
+      state.hack_server_iterations = 0;
+    }
+    state.hack_server = best;
+    state.hack_server_iterations++;
+  }
   log(ns, `Chose ${best} as hack server with ${ns.getHackingLevel()} hacking level`);
 }
 
