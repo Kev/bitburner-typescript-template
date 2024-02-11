@@ -103,7 +103,7 @@ export function export_state(ns: NS, state: State) {
 export async function cache_player(ns: NS, state: State): Promise<void> {
   state.joined_factions = ns.getPlayer().factions;
   state.hack_level = ns.getPlayer().skills.hacking;
-  // state.world = ns.getPlayer().bitNodeN; // How do I get this?
+  state.world = `${ns.getResetInfo().currentNode}`;
 }
 
 export async function world_end(ns: NS, state: State): Promise<void> {
