@@ -560,9 +560,9 @@ export async function choose_hack_server(ns: NS, state: State): Promise<void> {
       state.hack_server_iterations = 0;
     }
     state.hack_server = best;
-    state.hack_server_iterations++;
   }
-  log(ns, `Chose ${best} as hack server with ${ns.getHackingLevel()} hacking level`);
+  state.hack_server_iterations++;
+  log(ns, `Chose ${best} as hack server with ${ns.getHackingLevel()} hacking level, running against ${state.hack_server} for the ${state.hack_server_iterations}th time.`);
 }
 
 export async function prepare_hack_server(ns: NS, state: State): Promise<void> {
