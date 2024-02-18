@@ -118,8 +118,12 @@ export async function world_end(ns: NS, state: State): Promise<void> {
   const source_order = [[4, 3], [1, 3], [5, 3], [3, 1], [10, 1], [2, 1], [12, 3], [9, 3], [6, 1], [7, 1], [6, 3], [7, 3], [5, 3], [3, 3], [10, 3], [11, 3], [8, 3], [13, 3], [12, 99999999]];
   for (const source of source_order) {
     let found = false;
+    let modifier = 0;
+    if (state.world == `${source[0]}`) {
+      modifier = 1;
+    }
     for (const got of ns.singularity.getOwnedSourceFiles()) {
-      if (got.n === source[0] && got.lvl >= source[1]) {
+      if (got.n === source[0] && got.lvl + modifier >= source[1]) {
         found = true;
       }
     }
