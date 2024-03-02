@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { CityName, CorpEmployeePosition, CrimeType, NS, Server } from '@ns';
+import { CityName, CorpEmployeePosition, CorpMaterialName, CorpUpgradeName, CrimeType, NS, Server } from '@ns';
 import { port_hacks, prepare_server, wait_for, find_servers, faction_servers } from './base';
 export const function_sequence = [
   'cache_player',
@@ -614,6 +614,64 @@ export async function farm_hack_skill(ns: NS, state: State): Promise<void> {
   }
 }
 
+function buy_up_to(ns: NS, division: string, amounts: Map<CorpMaterialName, number>): boolean {
+  for (const city of cities) {
+    for (const material of amounts.keys()) {
+      const mat_data = ns.corporation.getMaterial("Agriculture", city, material);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const desired = amounts.get(material)!;
+      if (mat_data.stored < desired) {
+        if (mat_data.marketPrice * (desired - mat_data.stored) > ns.corporation.getCorporation().funds) {
+          return false;
+        }
+        ns.corporation.buyMaterial("Agriculture", city, material, desired - mat_data.stored);
+      }
+    }
+  }
+  return true;
+}
+
+function employees_ready(ns: NS, division: string): boolean {
+  for (const city of cities) {
+    if (ns.corporation.getOffice(division, city).avgMorale < 90 || ns.corporation.getOffice(division, city).avgEnergy < 90) {
+      return false;
+    }
+  }
+  return true;
+
+}
+
+function hire_up_to(ns: NS, division: string, amounts: Map<CorpEmployeePosition, number>): boolean {
+  for (const city of cities) {
+    for (const position of amounts.keys()) {
+      const desired = amounts.get(position) || 0;
+      while (ns.corporation.getOffice(division, city).employeeJobs[position] < desired) {
+        if (ns.corporation.getOffice(division, city).size == ns.corporation.getOffice(division, city).numEmployees) {
+          ns.corporation.upgradeOfficeSize(division, city, 3);
+        }
+        if (!ns.corporation.hireEmployee(division, city, position)) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+function warehouse_up_to(ns: NS, division: string, size: number): boolean {
+  for (const city of cities) {
+    const amount = size - ns.corporation.getWarehouse(division, city).size;
+    if (amount > 0) {
+      if (ns.corporation.getUpgradeWarehouseCost(division, city, amount) > ns.corporation.getCorporation().funds) {
+        return false;
+      }
+      ns.corporation.upgradeWarehouse(division, city, amount);
+    }
+  }
+  return true;
+
+}
+
 export async function run_corporation(ns: NS, state: State): Promise<void> {
   if (!ns.corporation.hasCorporation()) {
     // If we can self fund, do so, else attempt to use the BN3 feature to fund
@@ -625,6 +683,7 @@ export async function run_corporation(ns: NS, state: State): Promise<void> {
     return;
   }
   if (!ns.corporation.getCorporation().divisions.includes('Agriculture')) {
+    // Set a basic level of income that (I think) I should be able to afford after creating the corporation
     ns.corporation.expandIndustry('Agriculture', 'Agriculture');
     ns.corporation.purchaseUnlock('Smart Supply');
     for (const city of cities) {
@@ -633,6 +692,7 @@ export async function run_corporation(ns: NS, state: State): Promise<void> {
       }
       if (!ns.corporation.hasWarehouse('Agriculture', city)) {
         ns.corporation.purchaseWarehouse('Agriculture', city);
+        ns.corporation.upgradeWarehouse('Agriculture', city, 2);
       }
       const jobs = ns.corporation.getOffice('Agriculture', city).employeeJobs;
       const single_positions = ['Operations' as CorpEmployeePosition, 'Engineer' as CorpEmployeePosition, 'Business' as CorpEmployeePosition];
@@ -646,11 +706,49 @@ export async function run_corporation(ns: NS, state: State): Promise<void> {
       }
       ns.corporation.getMaterial('Agriculture', city, 'Food').desiredSellAmount = "MAX";
       ns.corporation.getMaterial('Agriculture', city, 'Food').desiredSellPrice = "MP";
+      ns.corporation.setSmartSupply('Agriculture', city, true);
     }
     ns.corporation.hireAdVert('Agriculture');
   }
 
-  for (const city of cities) {
-    ns.corporation.setSmartSupply('Agriculture', city, true);
+  // At this point, I should have a corporation, and it should be set up to be self funding, so I can slowly upgrade as funds are available
+  const first_upgrades: CorpUpgradeName[] = ['FocusWires', 'Neural Accelerators', 'Speech Processor Implants', 'Nuoptimal Nootropic Injector Implants', 'Smart Factories'];
+  for (const level of [1, 2]) {
+    for (const upgrade of first_upgrades) {
+      if (ns.corporation.getUpgradeLevel(upgrade) < level) {
+        if (ns.corporation.getUpgradeLevelCost(upgrade) > ns.corporation.getCorporation().funds) {
+          return;
+        }
+        ns.corporation.levelUpgrade(upgrade);
+      }
+    }
+  }
+
+  if (!buy_up_to(ns, 'Agriculture', new Map<CorpMaterialName, number>([['Hardware' as CorpMaterialName, 125], ['AI Cores' as CorpMaterialName, 75], ['Real Estate' as CorpMaterialName, 27000]]))) {
+    return;
+  }
+
+  if (!employees_ready(ns, 'Agriculture')) {
+    return;
+  }
+
+  if (!hire_up_to(ns, 'Agriculture', new Map<CorpEmployeePosition, number>([['Operations' as CorpEmployeePosition, 2], ['Engineer' as CorpEmployeePosition, 2], ['Business' as CorpEmployeePosition, 1], ['Management' as CorpEmployeePosition, 2], ['Research & Development' as CorpEmployeePosition, 2], ['Intern' as CorpEmployeePosition, 2]]))) {
+    return;
+  }
+
+  if (!warehouse_up_to(ns, 'Agriculture', 10)) {
+    return;
+  }
+
+  if (!buy_up_to(ns, 'Agriculture', new Map<CorpMaterialName, number>([['Hardware' as CorpMaterialName, 2800], ['Robots', 96], ['AI Cores' as CorpMaterialName, 2520], ['Real Estate' as CorpMaterialName, 146400]]))) {
+    return;
+  }
+
+  if (!warehouse_up_to(ns, 'Agriculture', 20)) {
+    return;
+  }
+
+  if (!buy_up_to(ns, 'Agriculture', new Map<CorpMaterialName, number>([['Hardware' as CorpMaterialName, 9300], ['Robots', 726], ['AI Cores' as CorpMaterialName, 6270], ['Real Estate' as CorpMaterialName, 230400]]))) {
+    return;
   }
 }
