@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { CrimeType, NS, Server } from '@ns';
+import { CityName, CorpEmployeePosition, CrimeType, NS, Server } from '@ns';
 import { port_hacks, prepare_server, wait_for, find_servers, faction_servers } from './base';
 export const function_sequence = [
   'cache_player',
@@ -16,11 +16,13 @@ export const function_sequence = [
   'join_factions',
   'work_for_factions',
   'do_crime',
+  'run_corporation',
   'choose_hack_server',
   'prepare_hack_server',
   'hack',
   'farm_hack_skill',
 ];
+export const cities: Array<CityName> = ['Aevum' as CityName, 'Chongqing' as CityName, 'Ishima' as CityName, 'New Tokyo' as CityName, 'Sector-12' as CityName, 'Volhaven' as CityName];
 
 // TODO: Add buying hacknet nodes for netburners
 
@@ -609,5 +611,46 @@ export async function farm_hack_skill(ns: NS, state: State): Promise<void> {
       return;
     }
     await wait_for(ns, pids);
+  }
+}
+
+export async function run_corporation(ns: NS, state: State): Promise<void> {
+  if (!ns.corporation.hasCorporation()) {
+    // If we can self fund, do so, else attempt to use the BN3 feature to fund
+    if (!ns.corporation.createCorporation("wondersheepcorp", true)) {
+      ns.corporation.createCorporation("wondersheepcorp", false);
+    }
+  }
+  if (!ns.corporation.hasCorporation()) {
+    return;
+  }
+  if (!ns.corporation.getCorporation().divisions.includes('Agriculture')) {
+    ns.corporation.expandIndustry('Agriculture', 'Agriculture');
+    ns.corporation.purchaseUnlock('Smart Supply');
+    for (const city of cities) {
+      if (!ns.corporation.getDivision('Agriculture').cities.includes(city)) {
+        ns.corporation.expandCity('Agriculture', city);
+      }
+      if (!ns.corporation.hasWarehouse('Agriculture', city)) {
+        ns.corporation.purchaseWarehouse('Agriculture', city);
+      }
+      const jobs = ns.corporation.getOffice('Agriculture', city).employeeJobs;
+      const single_positions = ['Operations' as CorpEmployeePosition, 'Engineer' as CorpEmployeePosition, 'Business' as CorpEmployeePosition];
+      for (const position of single_positions) {
+        if (jobs[position] < 1) {
+          if (ns.corporation.getOffice('Agriculture', city).size == ns.corporation.getOffice('Agriculture', city).numEmployees) {
+            ns.corporation.upgradeOfficeSize('Agriculture', city, 3);
+          }
+          ns.corporation.hireEmployee('Agriculture', city, position);
+        }
+      }
+      ns.corporation.getMaterial('Agriculture', city, 'Food').desiredSellAmount = "MAX";
+      ns.corporation.getMaterial('Agriculture', city, 'Food').desiredSellPrice = "MP";
+    }
+    ns.corporation.hireAdVert('Agriculture');
+  }
+
+  for (const city of cities) {
+    ns.corporation.setSmartSupply('Agriculture', city, true);
   }
 }
