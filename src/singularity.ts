@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { CityName, CorpEmployeePosition, CorpMaterialName, CorpUpgradeName, CrimeType, NS, Server } from '@ns';
 import { port_hacks, prepare_server, wait_for, find_servers, faction_servers } from './base';
@@ -38,6 +39,7 @@ interface StateInt {
   force_install: boolean;
   world: string;
   hack_server_iterations: number;
+  console_log: boolean;
 }
 
 export class State {
@@ -52,6 +54,7 @@ export class State {
   force_install = false;
   world = '';
   hack_server_iterations = 0;
+  console_log = false;
 }
 
 function export_only(ns: NS, fn: string) {
@@ -59,9 +62,12 @@ function export_only(ns: NS, fn: string) {
       ns.print("Running only ${fn}");const state = get_state(ns); await ${fn}(ns, state);export_state(ns, state);}`, 'w');
 }
 
-export function log(ns: NS, message: string) {
-  ns.writePort(2, message);
-  // ns.tprint(message);
+export function log(ns: NS, state: State, message: string) {
+  if (state.console_log) {
+    ns.tprint(message);
+  } else {
+    ns.writePort(2, message);
+  }
 }
 
 export function make_scripts(ns: NS) {
@@ -70,7 +76,7 @@ export function make_scripts(ns: NS) {
     const fn = function_sequence[i];
     const next_script = i + 1 < function_sequence.length ? `auto/${i + 1}.js` : 'auto/0.js';
     ns.write(`auto/${i}.js`, `import {${fn}, get_state, export_state, log} from "./singularity"; /** @param {NS} ns */export async function main(ns) {
-      log(ns, "Running ${fn}");const state = get_state(ns); await ns.sleep(0); await ${fn}(ns, state);export_state(ns, state);ns.spawn('${next_script}', {threads : 1, spawnDelay: 1});}`, 'w');
+      const state = get_state(ns); log(ns, state, "Running ${fn}");await ns.sleep(0); await ${fn}(ns, state);export_state(ns, state);ns.spawn('${next_script}', {threads : 1, spawnDelay: 1});}`, 'w');
     export_only(ns, fn);
   }
   const player = ns.getPlayer();
@@ -95,6 +101,7 @@ export function get_state(ns: NS): State {
 }
 
 export function export_state(ns: NS, state: State) {
+  state.console_log = false;
   const servers = state.servers;
   // Go through this dance because Map gets silently converted to an empty object,
   // And I'm not JS/TS-smart enough to fix that in a cleaner way.
@@ -131,7 +138,7 @@ export async function world_end(ns: NS, state: State): Promise<void> {
     }
     if (!found) {
       ns.run("/destroy_world_demon.js", 1, source[0]);
-      log(ns, `Running destroy_world_demon(${source[0]})`);
+      log(ns, state, `Running destroy_world_demon(${source[0]})`);
       await ns.sleep(100000000000);
     }
   }
@@ -178,7 +185,7 @@ export async function purchase_augmentations(ns: NS, state: State): Promise<void
         const amount = ns.getServerMoneyAvailable('home') / 10;
         await donate_to_faction(ns, faction, amount);
         await ns.sleep(0);
-        log(ns, `Donated $${ns.formatNumber(amount)} to ${faction} aiming for ${ns.formatNumber(highest_faction_requirements)} rep (now ${ns.formatNumber(ns.singularity.getFactionRep(faction))}).`);
+        log(ns, state, `Donated $${ns.formatNumber(amount)} to ${faction} aiming for ${ns.formatNumber(highest_faction_requirements)} rep (now ${ns.formatNumber(ns.singularity.getFactionRep(faction))}).`);
       }
       if (ns.singularity.getFactionRep(faction) > most_rep_with_favour && ns.singularity.getFactionFavor(faction) >= 150) {
         most_rep_with_favour = ns.singularity.getFactionRep(faction);
@@ -211,7 +218,7 @@ export async function purchase_augmentations(ns: NS, state: State): Promise<void
       while ((ns.getServerMoneyAvailable('home') >= 10 ** 13) && (needed_cash <= ns.getServerMoneyAvailable('home')) && (ns.singularity.getFactionRep(most_rep_with_favour_faction) < needed_rep)) {
         const amount = ns.getServerMoneyAvailable('home') / 100;
         await donate_to_faction(ns, most_rep_with_favour_faction, amount);
-        log(ns, `Donated $${ns.formatNumber(amount)} to ${most_rep_with_favour_faction} based on estimate of $${ns.formatNumber(needed_cash)} and ${ns.formatNumber(needed_rep)} rep needed (now ${ns.formatNumber(ns.singularity.getFactionRep(most_rep_with_favour_faction))}).`);
+        log(ns, state, `Donated $${ns.formatNumber(amount)} to ${most_rep_with_favour_faction} based on estimate of $${ns.formatNumber(needed_cash)} and ${ns.formatNumber(needed_rep)} rep needed (now ${ns.formatNumber(ns.singularity.getFactionRep(most_rep_with_favour_faction))}).`);
         await ns.sleep(0);
       }
     }
@@ -223,19 +230,19 @@ export async function purchase_augmentations(ns: NS, state: State): Promise<void
       candidates.sort((a, b) => ns.singularity.getAugmentationBasePrice(b) - ns.singularity.getAugmentationBasePrice(a));
       while (candidates.length > 0 && ns.singularity.getAugmentationPrice(candidates[0]) <= ns.getServerMoneyAvailable('home')) {
         const candidate = candidates.pop() || '';
-        log(ns, `Buying ${candidate} from ${factions.get(candidate)}`);
+        log(ns, state, `Buying ${candidate} from ${factions.get(candidate)}`);
         if (await purchase_augmentation(ns, factions.get(candidate) || '', candidate)) {
           bought = true;
         } else {
-          log(ns, `Failed to buy ${candidate} from ${factions.get(candidate)}`);
+          log(ns, state, `Failed to buy ${candidate} from ${factions.get(candidate)}`);
         }
       }
       while (lots_of_nfg && ns.singularity.getAugmentationPrice(NFG) <= ns.getServerMoneyAvailable('home') && ns.singularity.getFactionRep(lots_of_nfg || '') >= ns.singularity.getAugmentationRepReq(NFG)) {
-        log(ns, `Buying ${NFG} from ${lots_of_nfg}`);
+        log(ns, state, `Buying ${NFG} from ${lots_of_nfg}`);
         if (await purchase_augmentation(ns, lots_of_nfg || '', NFG)) {
           bought = true;
         } else {
-          log(ns, `Failed to buy ${NFG} from ${lots_of_nfg}`);
+          log(ns, state, `Failed to buy ${NFG} from ${lots_of_nfg}`);
         }
       }
     }
@@ -263,7 +270,7 @@ export async function install_augmentations(ns: NS, state: State): Promise<void>
 export async function purchase_tor(ns: NS, state: State): Promise<void> {
   if (ns.singularity.purchaseTor()) {
     state.purchased_tor = true;
-    log(ns, "Purchased Tor");
+    log(ns, state, "Purchased Tor");
   }
 }
 
@@ -274,7 +281,7 @@ export async function purchase_programs(ns: NS, state: State): Promise<void> {
       const cost = ns.singularity.getDarkwebProgramCost(program);
       if (cost <= ns.getServerMoneyAvailable('home')) {
         ns.singularity.purchaseProgram(program);
-        log(ns, `Purchased  ${program}`);
+        log(ns, state, `Purchased  ${program}`);
       }
     }
   }
@@ -283,7 +290,7 @@ export async function purchase_programs(ns: NS, state: State): Promise<void> {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function upgrade_home_ram(ns: NS, state: State): Promise<void> {
   if (ns.singularity.upgradeHomeRam()) {
-    log(ns, `Upgraded home RAM to ${ns.formatRam(ns.getServerMaxRam('home'))}`);
+    log(ns, state, `Upgraded home RAM to ${ns.formatRam(ns.getServerMaxRam('home'))}`);
   }
 }
 
@@ -300,7 +307,7 @@ export async function purchase_servers(ns: NS, state: State): Promise<void> {
     const cash = ns.getServerMoneyAvailable("home");
     const cost = ns.getPurchasedServerCost(initial_ram);
     if (cash > cost) {
-      log(ns, `Purchasing ${name}`);
+      log(ns, state, `Purchasing ${name}`);
       ns.purchaseServer(name, initial_ram);
     }
   }
@@ -332,7 +339,7 @@ export async function upgrade_servers(ns: NS, state: State): Promise<void> {
         }
       }
       if (upgrade_cost < ns.getServerMoneyAvailable("home")) {
-        log(ns, `Buying ${ns.formatRam(current_ram * 2)} for ${server}`);
+        log(ns, state, `Buying ${ns.formatRam(current_ram * 2)} for ${server}`);
         ns.upgradePurchasedServer(server, current_ram * 2);
         should_stop = false
       }
@@ -401,7 +408,7 @@ export async function join_factions(ns: NS, state: State): Promise<void> {
     }
     ns.singularity.joinFaction(faction);
     state.joined_factions.push(faction);
-    log(ns, `Joined ${faction}`);
+    log(ns, state, `Joined ${faction}`);
   }
 
   // TODO before this, travel to an appropriate city based on needing Tian Di Hui, or city factions
@@ -477,7 +484,7 @@ export async function spread(ns: NS, state: State): Promise<void> {
     await ns.sleep(0);
   }
   state.rooted = [...state.servers.keys()].filter(server => ns.hasRootAccess(server));
-  log(ns, `After spreading,  ${state.servers.size} servers`);
+  log(ns, state, `After spreading,  ${state.servers.size} servers`);
   find_servers(ns); // TODO: Clear this out and avoid calling functions that need it
 }
 
@@ -568,7 +575,7 @@ export async function choose_hack_server(ns: NS, state: State): Promise<void> {
     state.hack_server = best;
   }
   state.hack_server_iterations++;
-  log(ns, `Chose ${best} as hack server with ${ns.getHackingLevel()} hacking level, running against ${state.hack_server} for the ${state.hack_server_iterations}th time.`);
+  log(ns, state, `Chose ${best} as hack server with ${ns.getHackingLevel()} hacking level, running against ${state.hack_server} for the ${state.hack_server_iterations}th time.`);
 }
 
 export async function prepare_hack_server(ns: NS, state: State): Promise<void> {
@@ -588,7 +595,7 @@ function can_hack_demon(ns: NS, state: State): boolean {
   if (!state.servers.has('w0r1d_d43m0n')) {
     return false;
   }
-  log(ns, `Needed skill to hack daemon ${ns.getServerRequiredHackingLevel('w0r1d_d43m0n') * ns.getBitNodeMultipliers().WorldDaemonDifficulty} and I have ${ns.getHackingLevel()}`);
+  log(ns, state, `Needed skill to hack daemon ${ns.getServerRequiredHackingLevel('w0r1d_d43m0n') * ns.getBitNodeMultipliers().WorldDaemonDifficulty} and I have ${ns.getHackingLevel()}`);
   return ns.getServerRequiredHackingLevel('w0r1d_d43m0n') * ns.getBitNodeMultipliers().WorldDaemonDifficulty <= ns.getHackingLevel();
 }
 
@@ -614,26 +621,74 @@ export async function farm_hack_skill(ns: NS, state: State): Promise<void> {
   }
 }
 
-function buy_up_to(ns: NS, division: string, amounts: Map<CorpMaterialName, number>): boolean {
+async function buy_up_to(ns: NS, state: State, division: string, amounts: Map<CorpMaterialName, number>): Promise<boolean> {
+  let ok = true;
+  const amount_map = new Map < CityName, Map<CorpMaterialName, number>>();
   for (const city of cities) {
+    const city_map = new Map<CorpMaterialName, number>();
     for (const material of amounts.keys()) {
       const mat_data = ns.corporation.getMaterial("Agriculture", city, material);
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const desired = amounts.get(material)!;
       if (mat_data.stored < desired) {
-        if (mat_data.marketPrice * (desired - mat_data.stored) > ns.corporation.getCorporation().funds) {
-          return false;
+        log(ns, state, `Buying ${desired - mat_data.stored} of ${material} in ${city} to get to ${desired} from ${mat_data.stored}`);
+        city_map.set(material, (desired - mat_data.stored) / 20);
+      } else {
+        city_map.set(material, 0);
+      }
+    }
+    amount_map.set(city, city_map);
+  }
+  let bought = true;
+  while (bought && ok) {
+    bought = false;
+    // Loop with 10ms sleep until conditions are met, rather than once with 10s (which I think is a corporation tick)
+    // sleep, because being offline means the clock
+    // ticks faster once you're online again, in a way I haven't looked up the details of yet.
+    // This should prevent massive overstocking that prevents purchase of the materials needed to actually
+    // make the profit
+    for (const city of cities) {
+      if (!ok) {
+        break;
+      }
+      for (const material of amounts.keys()) {
+        const mat_data = ns.corporation.getMaterial("Agriculture", city, material);
+        const desired = amounts.get(material)!;
+        if (mat_data.stored < desired * 0.99) {
+          if (mat_data.marketPrice * (desired - mat_data.stored) > ns.corporation.getCorporation().funds) {
+            ok = false;
+            log(ns, state, `Not enough money to buy ${desired - mat_data.stored} of ${material} to get to ${desired} from ${mat_data.stored} in ${city} at ${mat_data.marketPrice} each`);
+            break;
+          }
+          const extra_space = ns.corporation.getMaterialData(material).size * (desired - mat_data.stored) + 200;
+          if (extra_space >= ns.corporation.getWarehouse(division, city).size - ns.corporation.getWarehouse(division, city).sizeUsed) {
+            log(ns, state, `Warehouse too small(${ns.corporation.getWarehouse(division, city).sizeUsed}/${ns.corporation.getWarehouse(division, city).size}(${ns.corporation.getWarehouse(division, city).level})) in ${city} for ${desired - mat_data.stored} (volume ${extra_space}) of ${material} to get to ${desired} from ${mat_data.stored}`);
+            if (!warehouse_up_to(ns, state, division, ns.corporation.getWarehouse(division, city).level + 1)) {
+              ok = false;
+              break;
+            }
+          }
+          ns.corporation.buyMaterial("Agriculture", city, material, amount_map.get(city)!.get(material)!);
+          bought = true;
         }
-        ns.corporation.buyMaterial("Agriculture", city, material, desired - mat_data.stored);
+      }
+    }
+    if (bought) {
+      await ns.sleep(10);
+    }
+    for (const city of cities) {
+      for (const material of amounts.keys()) {
+        ns.corporation.buyMaterial("Agriculture", city, material, 0);
       }
     }
   }
+
   return true;
 }
 
-function employees_ready(ns: NS, division: string): boolean {
+function employees_ready(ns: NS, state: State, division: string): boolean {
   for (const city of cities) {
     if (ns.corporation.getOffice(division, city).avgMorale < 90 || ns.corporation.getOffice(division, city).avgEnergy < 90) {
+      log(ns, state, `Morale or energy too low in ${city}`);
       return false;
     }
   }
@@ -641,30 +696,36 @@ function employees_ready(ns: NS, division: string): boolean {
 
 }
 
-function hire_up_to(ns: NS, division: string, amounts: Map<CorpEmployeePosition, number>): boolean {
+function hire_up_to(ns: NS, state: State, division: string, amounts: Map<CorpEmployeePosition, number>): boolean {
   for (const city of cities) {
     for (const position of amounts.keys()) {
       const desired = amounts.get(position) || 0;
       while (ns.corporation.getOffice(division, city).employeeJobs[position] < desired) {
         if (ns.corporation.getOffice(division, city).size == ns.corporation.getOffice(division, city).numEmployees) {
+          log(ns, state, `Upgrading office in ${city}`);
           ns.corporation.upgradeOfficeSize(division, city, 3);
         }
         if (!ns.corporation.hireEmployee(division, city, position)) {
           return false;
         }
+        log(ns, state, `Hired ${position} in ${city}`);
       }
     }
   }
   return true;
 }
 
-function warehouse_up_to(ns: NS, division: string, size: number): boolean {
+function warehouse_up_to(ns: NS, state: State, division: string, level: number): boolean {
   for (const city of cities) {
-    const amount = size - ns.corporation.getWarehouse(division, city).size;
+    const amount = level - ns.corporation.getWarehouse(division, city).level;
     if (amount > 0) {
-      if (ns.corporation.getUpgradeWarehouseCost(division, city, amount) > ns.corporation.getCorporation().funds) {
+      const cost = ns.corporation.getUpgradeWarehouseCost(division, city, amount);
+      const funds = ns.corporation.getCorporation().funds;
+      if (cost > funds) {
+        log(ns, state, `Not enough money to upgrade warehouse in ${city} to level ${level} - cost is ${cost} and I have ${funds}`);
         return false;
       }
+      log(ns, state, `Upgrading warehouse in ${city} to level ${level}`);
       ns.corporation.upgradeWarehouse(division, city, amount);
     }
   }
@@ -672,17 +733,33 @@ function warehouse_up_to(ns: NS, division: string, size: number): boolean {
 
 }
 
+function upgrade_up_to(ns: NS, state: State, upgrade: CorpUpgradeName, level: number): boolean {
+  for (let i = 0; i < level; i++) {
+    if (ns.corporation.getUpgradeLevel(upgrade) < level) {
+      if (ns.corporation.getUpgradeLevelCost(upgrade) > ns.corporation.getCorporation().funds) {
+        return false;
+      }
+      log(ns, state, `Upgrading ${upgrade} to level ${level}`);
+      ns.corporation.levelUpgrade(upgrade);
+    }
+  }
+  return true;
+}
+
 export async function run_corporation(ns: NS, state: State): Promise<void> {
   if (!ns.corporation.hasCorporation()) {
     // If we can self fund, do so, else attempt to use the BN3 feature to fund
     if (!ns.corporation.createCorporation("wondersheepcorp", true)) {
+      log(ns, state, "Attempting to create corporation");
       ns.corporation.createCorporation("wondersheepcorp", false);
     }
   }
   if (!ns.corporation.hasCorporation()) {
+    log(ns, state, "Failed to create corporation");
     return;
   }
   if (!ns.corporation.getCorporation().divisions.includes('Agriculture')) {
+    log(ns, state, "Setting up Agriculture");
     // Set a basic level of income that (I think) I should be able to afford after creating the corporation
     ns.corporation.expandIndustry('Agriculture', 'Agriculture');
     ns.corporation.purchaseUnlock('Smart Supply');
@@ -715,40 +792,42 @@ export async function run_corporation(ns: NS, state: State): Promise<void> {
   const first_upgrades: CorpUpgradeName[] = ['FocusWires', 'Neural Accelerators', 'Speech Processor Implants', 'Nuoptimal Nootropic Injector Implants', 'Smart Factories'];
   for (const level of [1, 2]) {
     for (const upgrade of first_upgrades) {
-      if (ns.corporation.getUpgradeLevel(upgrade) < level) {
-        if (ns.corporation.getUpgradeLevelCost(upgrade) > ns.corporation.getCorporation().funds) {
-          return;
-        }
-        ns.corporation.levelUpgrade(upgrade);
-      }
+      if (!upgrade_up_to(ns, state, upgrade, level)) return;
     }
   }
 
-  if (!buy_up_to(ns, 'Agriculture', new Map<CorpMaterialName, number>([['Hardware' as CorpMaterialName, 125], ['AI Cores' as CorpMaterialName, 75], ['Real Estate' as CorpMaterialName, 27000]]))) {
+
+  if (!await buy_up_to(ns, state, 'Agriculture', new Map<CorpMaterialName, number>([['Hardware' as CorpMaterialName, 125], ['AI Cores' as CorpMaterialName, 75], ['Real Estate' as CorpMaterialName, 27000]]))) {
     return;
   }
 
-  if (!employees_ready(ns, 'Agriculture')) {
+  if (!employees_ready(ns, state, 'Agriculture')) {
     return;
   }
 
-  if (!hire_up_to(ns, 'Agriculture', new Map<CorpEmployeePosition, number>([['Operations' as CorpEmployeePosition, 2], ['Engineer' as CorpEmployeePosition, 2], ['Business' as CorpEmployeePosition, 1], ['Management' as CorpEmployeePosition, 2], ['Research & Development' as CorpEmployeePosition, 2], ['Intern' as CorpEmployeePosition, 2]]))) {
+  if (!upgrade_up_to(ns, state, 'DreamSense', 1)) return;
+
+  if (!hire_up_to(ns, state, 'Agriculture', new Map<CorpEmployeePosition, number>([['Operations' as CorpEmployeePosition, 2], ['Engineer' as CorpEmployeePosition, 2], ['Business' as CorpEmployeePosition, 1], ['Management' as CorpEmployeePosition, 2], ['Research & Development' as CorpEmployeePosition, 2], ['Intern' as CorpEmployeePosition, 2]]))) {
     return;
   }
 
-  if (!warehouse_up_to(ns, 'Agriculture', 10)) {
+  if (!upgrade_up_to(ns, state, 'Smart Factories', 10) || !upgrade_up_to(ns, state, 'Smart Storage', 10)) return;
+
+  if (!warehouse_up_to(ns, state, 'Agriculture', 10)) {
     return;
   }
 
-  if (!buy_up_to(ns, 'Agriculture', new Map<CorpMaterialName, number>([['Hardware' as CorpMaterialName, 2800], ['Robots', 96], ['AI Cores' as CorpMaterialName, 2520], ['Real Estate' as CorpMaterialName, 146400]]))) {
+  if (!await buy_up_to(ns, state, 'Agriculture', new Map<CorpMaterialName, number>([['Hardware' as CorpMaterialName, 2800], ['Robots', 96], ['AI Cores' as CorpMaterialName, 2520], ['Real Estate' as CorpMaterialName, 146400]]))) {
     return;
   }
 
-  if (!warehouse_up_to(ns, 'Agriculture', 20)) {
+  if (!upgrade_up_to(ns, state, 'DreamSense', 2)) return;
+
+  if (!warehouse_up_to(ns, state, 'Agriculture', 20)) {
     return;
   }
 
-  if (!buy_up_to(ns, 'Agriculture', new Map<CorpMaterialName, number>([['Hardware' as CorpMaterialName, 9300], ['Robots', 726], ['AI Cores' as CorpMaterialName, 6270], ['Real Estate' as CorpMaterialName, 230400]]))) {
+  if (!await buy_up_to(ns, state, 'Agriculture', new Map<CorpMaterialName, number>([['Hardware' as CorpMaterialName, 9300], ['Robots', 726], ['AI Cores' as CorpMaterialName, 6270], ['Real Estate' as CorpMaterialName, 230400]]))) {
     return;
   }
 }
