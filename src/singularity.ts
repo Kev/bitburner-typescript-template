@@ -623,7 +623,7 @@ export async function farm_hack_skill(ns: NS, state: State): Promise<void> {
 
 async function buy_up_to(ns: NS, state: State, division: string, amounts: Map<CorpMaterialName, number>): Promise<boolean> {
   let ok = true;
-  const amount_map = new Map < CityName, Map<CorpMaterialName, number>>();
+  const amount_map = new Map<CityName, Map<CorpMaterialName, number>>();
   for (const city of cities) {
     const city_map = new Map<CorpMaterialName, number>();
     for (const material of amounts.keys()) {
@@ -696,20 +696,27 @@ function employees_ready(ns: NS, state: State, division: string): boolean {
 
 }
 
+function hire_city_up_to(ns: NS, state: State, division: string, city: CityName, amounts: Map<CorpEmployeePosition, number>): boolean {
+  for (const position of amounts.keys()) {
+    const desired = amounts.get(position) || 0;
+    while (ns.corporation.getOffice(division, city).employeeJobs[position] < desired) {
+      if (ns.corporation.getOffice(division, city).size == ns.corporation.getOffice(division, city).numEmployees) {
+        log(ns, state, `Upgrading office in ${city}`);
+        ns.corporation.upgradeOfficeSize(division, city, 3);
+      }
+      if (!ns.corporation.hireEmployee(division, city, position)) {
+        return false;
+      }
+      log(ns, state, `Hired ${position} in ${city}`);
+    }
+  }
+  return true;
+}
+
 function hire_up_to(ns: NS, state: State, division: string, amounts: Map<CorpEmployeePosition, number>): boolean {
   for (const city of cities) {
-    for (const position of amounts.keys()) {
-      const desired = amounts.get(position) || 0;
-      while (ns.corporation.getOffice(division, city).employeeJobs[position] < desired) {
-        if (ns.corporation.getOffice(division, city).size == ns.corporation.getOffice(division, city).numEmployees) {
-          log(ns, state, `Upgrading office in ${city}`);
-          ns.corporation.upgradeOfficeSize(division, city, 3);
-        }
-        if (!ns.corporation.hireEmployee(division, city, position)) {
-          return false;
-        }
-        log(ns, state, `Hired ${position} in ${city}`);
-      }
+    if (!hire_city_up_to(ns, state, division, city, amounts)) {
+      return false;
     }
   }
   return true;
@@ -717,6 +724,9 @@ function hire_up_to(ns: NS, state: State, division: string, amounts: Map<CorpEmp
 
 function warehouse_up_to(ns: NS, state: State, division: string, level: number): boolean {
   for (const city of cities) {
+    if (!ns.corporation.hasWarehouse(division, city)) {
+      ns.corporation.purchaseWarehouse(division, city);
+    }
     const amount = level - ns.corporation.getWarehouse(division, city).level;
     if (amount > 0) {
       const cost = ns.corporation.getUpgradeWarehouseCost(division, city, amount);
@@ -830,4 +840,58 @@ export async function run_corporation(ns: NS, state: State): Promise<void> {
   if (!await buy_up_to(ns, state, 'Agriculture', new Map<CorpMaterialName, number>([['Hardware' as CorpMaterialName, 9300], ['Robots', 726], ['AI Cores' as CorpMaterialName, 6270], ['Real Estate' as CorpMaterialName, 230400]]))) {
     return;
   }
+
+  const billion = 10 ** 9;
+
+  if (!ns.corporation.getCorporation().divisions.includes('Tobacco')) {
+    if (ns.corporation.getCorporation().funds < 20 * billion) {
+      log(ns, state, "Not enough money to expand to Tobacco");
+      return;
+    }
+    log(ns, state, "Setting up Tobacco");
+    ns.corporation.expandIndustry('Tobacco', 'Tobacco');
+  }
+
+  for (const city of cities) {
+    if (!ns.corporation.getDivision('Tobacco').cities.includes(city)) {
+      if (ns.corporation.getCorporation().funds < 20 * billion) {
+        log(ns, state, "Not enough money to expand Tobacco to ${city}");
+        return;
+      }
+      log(ns, state, `Expanding Tobacco to ${city}`);
+      ns.corporation.expandCity('Tobacco', city);
+    }
+  }
+
+  if (!warehouse_up_to(ns, state, 'Tobacco', 10)) return;
+
+  if (!hire_up_to(ns, state, 'Tobacco', new Map<CorpEmployeePosition, number>([['Operations' as CorpEmployeePosition, 2], ['Engineer' as CorpEmployeePosition, 2], ['Business' as CorpEmployeePosition, 1], ['Management' as CorpEmployeePosition, 2], ['Research & Development' as CorpEmployeePosition, 2], ['Intern' as CorpEmployeePosition, 2]]))) return;
+
+  if (!hire_city_up_to(ns, state, 'Tobacco', "Aevum" as CityName, new Map<CorpEmployeePosition, number>([['Operations' as CorpEmployeePosition, 6], ['Engineer' as CorpEmployeePosition, 6], ['Business' as CorpEmployeePosition, 6], ['Management' as CorpEmployeePosition, 6], ['Research & Development' as CorpEmployeePosition, 6], ['Intern' as CorpEmployeePosition, 6]]))) return;
+
+  if (!ns.corporation.getDivision('Tobacco').products.includes('Tobacco1')) {
+    if (ns.corporation.getCorporation().funds < 2 * billion) {
+      log(ns, state, "Not enough money to make Tobacco1");
+      return;
+    }
+    log(ns, state, "Setting up Tobacco1");
+    ns.corporation.makeProduct('Tobacco', 'Aevum', 'Tobacco1', billion, billion);
+  }
+
+  if (ns.corporation.getProduct('Tobacco', 'Aevum', 'Tobacco1').developmentProgress < 100) {
+    log(ns, state, `Not enough development progress on Tobacco1 (${ns.corporation.getProduct('Tobacco', 'Aevum', 'Tobacco1').developmentProgress}%)`);
+    return;
+  }
+
+  if (!warehouse_up_to(ns, state, 'Tobacco', 10)) {
+    return;
+  }
+
+  for (const city of cities) {
+    ns.corporation.getProduct('Tobacco', city, 'Tobacco1').desiredSellAmount = "MAX";
+    ns.corporation.getProduct('Tobacco', city, 'Tobacco1').desiredSellPrice = "MP";
+    ns.corporation.setSmartSupply('Tobacco', city, true);
+  }
+
+  upgrade_up_to(ns, state, 'Wilson Analytics', ns.corporation.getUpgradeLevel('Wilson Analytics') + 1);
 }
