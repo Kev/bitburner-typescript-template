@@ -1,10 +1,12 @@
 import { NS } from "@ns";
-import { make_scripts } from './singularity';
+import { log, make_scripts } from './singularity';
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog('ALL');
   ns.tail();
+  ns.print("Generating scripts");
   make_scripts(ns);
+  ns.print("Starting auto/0.js");
   const pid = ns.run('auto/0.js');
   ns.atExit(() => {
     const processes = ns.ps();
@@ -14,6 +16,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
     ns.kill(pid);
+    ns.print("Done");
   });
   for (;;) {
     let message = ns.readPort(2);

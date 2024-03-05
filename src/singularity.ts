@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { CityName, CorpEmployeePosition, CorpMaterialName, CorpUpgradeName, CrimeType, NS, Server } from '@ns';
+import { CityName, CorpEmployeePosition, CorpMaterialName, CorpResearchName, CorpUpgradeName, CrimeType, NS, Server } from '@ns';
 import { port_hacks, prepare_server, wait_for, find_servers, faction_servers } from './base';
 export const function_sequence = [
   'cache_player',
@@ -65,8 +65,28 @@ function export_only(ns: NS, fn: string) {
 export function log(ns: NS, state: State, message: string) {
   if (state.console_log) {
     ns.tprint(message);
-  } else {
-    ns.writePort(2, message);
+    ns.print(message);
+  }
+  ns.writePort(2, message);
+}
+
+export async function run_action(ns: NS, index: number, action: (ns: NS, state: State) => Promise<void>) {
+  const state = get_state(ns);
+  await ns.sleep(0);
+  log(ns, state, `Running ${function_sequence[index]}`);
+  await action(ns, state);
+  log(ns, state, `Finished ${function_sequence[index]}`);
+  export_state(ns, state);
+  for (let i = 1; i < function_sequence.length; i++) {
+    const next_index = (i + index) % function_sequence.length;
+    const next_script = `auto/${next_index}.js`;
+    // log(ns, state, `Considering spawning ${next_script}`)
+    if (ns.getScriptRam(next_script) + ns.getScriptRam('auto.js') < ns.getServerMaxRam('home')) {
+      // log(ns, state, `Spawning ${next_script}`)
+      ns.spawn(next_script, { threads: 1, spawnDelay: 1 });
+    } else {
+      log(ns, state, `Skipping ${next_script} as there isn't enough RAM`);
+    }
   }
 }
 
@@ -74,9 +94,7 @@ export function make_scripts(ns: NS) {
   export_only(ns, 'make_scripts');
   for (let i = 0; i < function_sequence.length; i++) {
     const fn = function_sequence[i];
-    const next_script = i + 1 < function_sequence.length ? `auto/${i + 1}.js` : 'auto/0.js';
-    ns.write(`auto/${i}.js`, `import {${fn}, get_state, export_state, log} from "./singularity"; /** @param {NS} ns */export async function main(ns) {
-      const state = get_state(ns); log(ns, state, "Running ${fn}");await ns.sleep(0); await ${fn}(ns, state);export_state(ns, state);ns.spawn('${next_script}', {threads : 1, spawnDelay: 1});}`, 'w');
+    ns.write(`auto/${i}.js`, `import {${fn}, run_action} from "./singularity"; /** @param {NS} ns */export async function main(ns) {ns.print("Starting action ${i}");await run_action(ns, ${i}, ${fn});ns.print("Done - shouldn't happen"); }`, 'w');
     export_only(ns, fn);
   }
   const player = ns.getPlayer();
@@ -124,7 +142,7 @@ export async function world_end(ns: NS, state: State): Promise<void> {
   if (!can_hack_demon(ns, state)) {
     return;
   }
-  const source_order = [[4, 3], [1, 3], [5, 3], [3, 1], [10, 1], [2, 1], [12, 3], [9, 3], [6, 1], [7, 1], [6, 3], [7, 3], [5, 3], [3, 3], [10, 3], [11, 3], [8, 3], [13, 3], [12, 99999999]];
+  const source_order = [[4, 3], [1, 3], [5, 3], [3, 3], [10, 1], [2, 1], [12, 3], [9, 3], [6, 1], [7, 1], [6, 3], [7, 3], [5, 3], [3, 3], [10, 3], [11, 3], [8, 3], [13, 3], [12, 99999999]];
   for (const source of source_order) {
     let found = false;
     let modifier = 0;
@@ -579,15 +597,22 @@ export async function choose_hack_server(ns: NS, state: State): Promise<void> {
 }
 
 export async function prepare_hack_server(ns: NS, state: State): Promise<void> {
+  if (ns.fileExists('skip_hack.txt')) {
+    log(ns, state, 'Skipping hack');
+    await ns.sleep(10000);
+  }
   await prepare_server(ns, state.hack_server, true);
 }
 
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function hack(ns: NS, state: State): Promise<void> {
   // if (can_hack_demon(ns, state)) {
   //   return;
   // }
+  if (ns.fileExists('skip_hack.txt')) {
+    log(ns, state, 'Skipping hack');
+    await ns.sleep(10000);
+  }
   await wait_for(ns, [ns.run('batcher.js', 1)]);
 }
 
@@ -627,10 +652,10 @@ async function buy_up_to(ns: NS, state: State, division: string, amounts: Map<Co
   for (const city of cities) {
     const city_map = new Map<CorpMaterialName, number>();
     for (const material of amounts.keys()) {
-      const mat_data = ns.corporation.getMaterial("Agriculture", city, material);
+      const mat_data = ns.corporation.getMaterial(division, city, material);
       const desired = amounts.get(material)!;
       if (mat_data.stored < desired) {
-        log(ns, state, `Buying ${desired - mat_data.stored} of ${material} in ${city} to get to ${desired} from ${mat_data.stored}`);
+        log(ns, state, `${division}: Buying ${desired - mat_data.stored} of ${material} in ${city} to get to ${desired} from ${mat_data.stored}`);
         city_map.set(material, (desired - mat_data.stored) / 20);
       } else {
         city_map.set(material, 0);
@@ -651,23 +676,23 @@ async function buy_up_to(ns: NS, state: State, division: string, amounts: Map<Co
         break;
       }
       for (const material of amounts.keys()) {
-        const mat_data = ns.corporation.getMaterial("Agriculture", city, material);
+        const mat_data = ns.corporation.getMaterial(division, city, material);
         const desired = amounts.get(material)!;
         if (mat_data.stored < desired * 0.99) {
           if (mat_data.marketPrice * (desired - mat_data.stored) > ns.corporation.getCorporation().funds) {
             ok = false;
-            log(ns, state, `Not enough money to buy ${desired - mat_data.stored} of ${material} to get to ${desired} from ${mat_data.stored} in ${city} at ${mat_data.marketPrice} each`);
+            log(ns, state, `${division}: Not enough money to buy ${desired - mat_data.stored} of ${material} to get to ${desired} from ${mat_data.stored} in ${city} at ${mat_data.marketPrice} each`);
             break;
           }
           const extra_space = ns.corporation.getMaterialData(material).size * (desired - mat_data.stored) + 200;
           if (extra_space >= ns.corporation.getWarehouse(division, city).size - ns.corporation.getWarehouse(division, city).sizeUsed) {
-            log(ns, state, `Warehouse too small(${ns.corporation.getWarehouse(division, city).sizeUsed}/${ns.corporation.getWarehouse(division, city).size}(${ns.corporation.getWarehouse(division, city).level})) in ${city} for ${desired - mat_data.stored} (volume ${extra_space}) of ${material} to get to ${desired} from ${mat_data.stored}`);
+            log(ns, state, `${division}: Warehouse too small(${ns.corporation.getWarehouse(division, city).sizeUsed}/${ns.corporation.getWarehouse(division, city).size}(${ns.corporation.getWarehouse(division, city).level})) in ${city} for ${desired - mat_data.stored} (volume ${extra_space}) of ${material} to get to ${desired} from ${mat_data.stored}`);
             if (!warehouse_up_to(ns, state, division, ns.corporation.getWarehouse(division, city).level + 1)) {
               ok = false;
               break;
             }
           }
-          ns.corporation.buyMaterial("Agriculture", city, material, amount_map.get(city)!.get(material)!);
+          ns.corporation.buyMaterial(division, city, material, amount_map.get(city)!.get(material)!);
           bought = true;
         }
       }
@@ -677,18 +702,18 @@ async function buy_up_to(ns: NS, state: State, division: string, amounts: Map<Co
     }
     for (const city of cities) {
       for (const material of amounts.keys()) {
-        ns.corporation.buyMaterial("Agriculture", city, material, 0);
+        ns.corporation.buyMaterial(division, city, material, 0);
       }
     }
   }
 
-  return true;
+  return ok;
 }
 
 function employees_ready(ns: NS, state: State, division: string): boolean {
   for (const city of cities) {
     if (ns.corporation.getOffice(division, city).avgMorale < 90 || ns.corporation.getOffice(division, city).avgEnergy < 90) {
-      log(ns, state, `Morale or energy too low in ${city}`);
+      log(ns, state, `${division}: Morale or energy too low in ${city}`);
       return false;
     }
   }
@@ -701,13 +726,13 @@ function hire_city_up_to(ns: NS, state: State, division: string, city: CityName,
     const desired = amounts.get(position) || 0;
     while (ns.corporation.getOffice(division, city).employeeJobs[position] < desired) {
       if (ns.corporation.getOffice(division, city).size == ns.corporation.getOffice(division, city).numEmployees) {
-        log(ns, state, `Upgrading office in ${city}`);
+        log(ns, state, `${division}: Upgrading office in ${city}`);
         ns.corporation.upgradeOfficeSize(division, city, 3);
       }
       if (!ns.corporation.hireEmployee(division, city, position)) {
         return false;
       }
-      log(ns, state, `Hired ${position} in ${city}`);
+      log(ns, state, `${division}: Hired ${position} in ${city}`);
     }
   }
   return true;
@@ -732,15 +757,34 @@ function warehouse_up_to(ns: NS, state: State, division: string, level: number):
       const cost = ns.corporation.getUpgradeWarehouseCost(division, city, amount);
       const funds = ns.corporation.getCorporation().funds;
       if (cost > funds) {
-        log(ns, state, `Not enough money to upgrade warehouse in ${city} to level ${level} - cost is ${cost} and I have ${funds}`);
+        log(ns, state, `${division}: Not enough money to upgrade warehouse in ${city} to level ${level} - cost is ${cost} and I have ${funds}`);
         return false;
       }
-      log(ns, state, `Upgrading warehouse in ${city} to level ${level}`);
+      log(ns, state, `${division}: Upgrading warehouse in ${city} to level ${level}`);
       ns.corporation.upgradeWarehouse(division, city, amount);
     }
   }
   return true;
+}
 
+function warehouse_for_space(ns: NS, state: State, division: string, space: number): boolean {
+  for (const city of cities) {
+    if (!ns.corporation.hasWarehouse(division, city)) {
+      ns.corporation.purchaseWarehouse(division, city);
+    }
+    while (ns.corporation.getWarehouse(division, city).size - ns.corporation.getWarehouse(division, city).sizeUsed < space) {
+      const cost = ns.corporation.getUpgradeWarehouseCost(division, city, 1);
+      const funds = ns.corporation.getCorporation().funds;
+      const new_level = ns.corporation.getWarehouse(division, city).level + 1;
+      if (cost > funds) {
+        log(ns, state, `${division}: Not enough money to upgrade warehouse in ${city} to level ${new_level} - cost is ${cost} and I have ${funds}`);
+        return false;
+      }
+      log(ns, state, `${division}: Upgrading warehouse in ${city} to level ${new_level}`);
+      ns.corporation.upgradeWarehouse(division, city, 1);
+    }
+  }
+  return true;
 }
 
 function upgrade_up_to(ns: NS, state: State, upgrade: CorpUpgradeName, level: number): boolean {
@@ -752,6 +796,40 @@ function upgrade_up_to(ns: NS, state: State, upgrade: CorpUpgradeName, level: nu
       log(ns, state, `Upgrading ${upgrade} to level ${level}`);
       ns.corporation.levelUpgrade(upgrade);
     }
+  }
+  return true;
+}
+
+function research(ns: NS, state: State, division: string, researches: Array<CorpResearchName>, point_buffer = 70000): boolean {
+  let total_cost = 0;
+  for (const research of researches) {
+    if (!ns.corporation.hasResearched(division, research)) {
+      log(ns, state, `Research cost of ${research} for ${division} is ${ns.corporation.getResearchCost(division, research)}`);
+      total_cost += ns.corporation.getResearchCost(division, research);
+    }
+  }
+  if (total_cost) {
+    log(ns, state, `Researching ${researches.join(', ')} for ${division} costs cost of ${total_cost} out of ${ns.corporation.getDivision(division).researchPoints}`);
+  }
+  if (total_cost + point_buffer < ns.corporation.getDivision(division).researchPoints) {
+    for (const research of researches) {
+      if (!ns.corporation.hasResearched(division, research)) {
+        log(ns, state, `Researching ${research} for ${division} at a cost of ${ns.corporation.getResearchCost(division, research)}`);
+        ns.corporation.research(division, research);
+
+      }
+    }
+  }
+  return total_cost == 0; // Because things take a while to research after you start them, only return true if they were already researched
+}
+
+function research_in_sequence(ns: NS, state: State, division: string, researches: Array<CorpResearchName>, point_buffer: number, buffer_increase: number): boolean {
+  let buffer = point_buffer;
+  for (const research_name of researches) {
+    if (!research(ns, state, division, [research_name], buffer)) {
+      return false;
+    }
+    buffer += buffer_increase;
   }
   return true;
 }
@@ -841,6 +919,8 @@ export async function run_corporation(ns: NS, state: State): Promise<void> {
     return;
   }
 
+  warehouse_for_space(ns, state, 'Agriculture', 200); // Silently fail because sometimes this tries to buy when it's not strictly needed
+
   const billion = 10 ** 9;
 
   if (!ns.corporation.getCorporation().divisions.includes('Tobacco')) {
@@ -869,29 +949,140 @@ export async function run_corporation(ns: NS, state: State): Promise<void> {
 
   if (!hire_city_up_to(ns, state, 'Tobacco', "Aevum" as CityName, new Map<CorpEmployeePosition, number>([['Operations' as CorpEmployeePosition, 6], ['Engineer' as CorpEmployeePosition, 6], ['Business' as CorpEmployeePosition, 6], ['Management' as CorpEmployeePosition, 6], ['Research & Development' as CorpEmployeePosition, 6], ['Intern' as CorpEmployeePosition, 6]]))) return;
 
-  if (!ns.corporation.getDivision('Tobacco').products.includes('Tobacco1')) {
-    if (ns.corporation.getCorporation().funds < 2 * billion) {
-      log(ns, state, "Not enough money to make Tobacco1");
-      return;
-    }
-    log(ns, state, "Setting up Tobacco1");
-    ns.corporation.makeProduct('Tobacco', 'Aevum', 'Tobacco1', billion, billion);
+  let next_tobacco = 1;
+  const all_products_ready = ns.corporation.getDivision('Tobacco').products.every(product => ns.corporation.getProduct('Tobacco', 'Aevum', product).developmentProgress >= 100);
+  for (const product of ns.corporation.getDivision('Tobacco').products) {
+    const num = parseInt(product.replace('Tobacco', ''));
+    next_tobacco = Math.max(next_tobacco, num + 1);
   }
 
-  if (ns.corporation.getProduct('Tobacco', 'Aevum', 'Tobacco1').developmentProgress < 100) {
-    log(ns, state, `Not enough development progress on Tobacco1 (${ns.corporation.getProduct('Tobacco', 'Aevum', 'Tobacco1').developmentProgress}%)`);
-    return;
+  const max_products = ns.corporation.getDivision('Tobacco').maxProducts;
+
+  // Always aim to be researching a new product with improved quality
+  if (all_products_ready && ns.corporation.getDivision('Tobacco').products.length == max_products) {
+    let min_quality = Infinity;
+    let min_product = '';
+    for (const product of ns.corporation.getDivision('Tobacco').products) {
+      if (ns.corporation.getProduct('Tobacco', 'Aevum', product).stats.quality < min_quality) {
+        min_quality = ns.corporation.getProduct('Tobacco', 'Aevum', product).stats.quality;
+        min_product = product;
+      }
+    }
+    log(ns, state, `Discontinuing ${min_product} at quality ${min_quality}`);
+    ns.corporation.discontinueProduct('Tobacco', min_product);
   }
+
+  if (ns.corporation.getDivision('Tobacco').products.length < max_products && all_products_ready) {
+    const product = `Tobacco${next_tobacco}`;
+    if (ns.corporation.getCorporation().funds < 2 * billion) {
+      log(ns, state, "Not enough money to make ${product}");
+      return;
+    }
+    log(ns, state, "Setting up ${product}");
+    const amount = Math.min(billion, ns.corporation.getCorporation().funds / 10);
+    ns.corporation.makeProduct('Tobacco', 'Aevum', product, amount, amount);
+  }
+
+  // Do research after starting new products, as the new products will benefit from the research points
+  ns.corporation.getCorporation().divisions.forEach(division => {
+    if (research(ns, state, division, ['Hi-Tech R&D Laboratory'])) {
+      if (research(ns, state, division, ['Market-TA.I', 'Market-TA.II'])) {
+        if (division == 'Agriculture') {
+          cities.forEach(city => {
+            ns.corporation.setMaterialMarketTA2(division, city, 'Food', true);
+            ns.corporation.setMaterialMarketTA2(division, city, 'Plants', true);
+          });
+        } else {
+          research_in_sequence(ns, state, division, ['uPgrade: Fulcrum', 'uPgrade: Capacity.I', 'uPgrade: Capacity.II', 'uPgrade: Dashboard', 'Self-Correcting Assemblers', 'Drones', 'Drones - Assembly', 'Drones - Transport', 'AutoBrew', 'AutoPartyManager', 'Automatic Drug Administration', 'Go-Juice', 'CPH4 Injections', 'Overclock', 'Sti.mu'], 80000, 10000);
+        }
+
+        ns.corporation.getDivision(division).products.forEach(product => {
+          ns.corporation.setProductMarketTA2(division, product, true);
+        });
+      }
+      else {
+        for (const product of ns.corporation.getDivision(division).products) {
+          // if (ns.corporation.getProduct(division, 'Aevum', product).developmentProgress < 100) continue;
+          ns.corporation.sellProduct(division, 'Aevum', product, "MAX", "MP", true);
+        }
+
+
+      }
+    }
+  });
 
   if (!warehouse_up_to(ns, state, 'Tobacco', 10)) {
     return;
   }
 
+
   for (const city of cities) {
-    ns.corporation.getProduct('Tobacco', city, 'Tobacco1').desiredSellAmount = "MAX";
-    ns.corporation.getProduct('Tobacco', city, 'Tobacco1').desiredSellPrice = "MP";
+    for (const product of ns.corporation.getDivision('Tobacco').products) {
+      if (ns.corporation.getProduct('Tobacco', 'Aevum', product).developmentProgress < 100) continue;
+      ns.corporation.getProduct('Tobacco', city, product).desiredSellAmount = "MAX";
+      ns.corporation.getProduct('Tobacco', city, product).desiredSellPrice = "MP";
+    }
     ns.corporation.setSmartSupply('Tobacco', city, true);
   }
 
-  upgrade_up_to(ns, state, 'Wilson Analytics', ns.corporation.getUpgradeLevel('Wilson Analytics') + 1);
+
+  let multiplier = 0;
+  let countdown_to_log = 0;
+  let wilson = true;
+  let goods = true;
+  let aevum_hire = true;
+  let all_hire = true;
+  let dreamsense = true;
+  let upgrades = true;
+  let secondary_upgrades = true;
+  log(ns, state, "Starting Tobacco loop");
+  while (wilson || goods || aevum_hire || all_hire || dreamsense || upgrades || secondary_upgrades) {
+    multiplier = Math.max(multiplier + 1, multiplier * 1.15);
+    const verbose = false;
+    if (verbose || countdown_to_log <= 0) {
+      log(ns, state, `Running Tobacco loop @ ${multiplier}`);
+      countdown_to_log = 10;
+    }
+    countdown_to_log--;
+
+    if (verbose) { log(ns, state, `about to wilson`); await ns.sleep(0); }
+    wilson = wilson && upgrade_up_to(ns, state, 'Wilson Analytics', ns.corporation.getUpgradeLevel('Wilson Analytics') + 1);
+    ns.corporation.hireAdVert('Tobacco'); // Allow to silently fail
+
+    if (verbose) { log(ns, state, `about to warehouse`); await ns.sleep(0); }
+    // Check for warehouse space before and after buying more materials, and don't buy if there isn't space
+    const warehouse = warehouse_for_space(ns, state, 'Tobacco', 200); // always try this, because it's important to keep goods selling
+    goods = goods && warehouse;
+    goods = goods && await buy_up_to(ns, state, 'Tobacco', new Map<CorpMaterialName, number>([['Hardware' as CorpMaterialName, 1 * multiplier], ['Robots', 4 * multiplier], ['AI Cores' as CorpMaterialName, 1 * multiplier], ['Real Estate' as CorpMaterialName, 1 * multiplier]]));
+
+    if (verbose) { log(ns, state, `about to warehouse2`); await ns.sleep(0); }
+    goods = goods && warehouse_for_space(ns, state, 'Tobacco', 200);
+
+    if (verbose) { log(ns, state, `about to hire aevum`); await ns.sleep(0); }
+    // Try to keep Aevum staffing above others, as the research base
+    aevum_hire = aevum_hire && hire_city_up_to(ns, state, 'Tobacco', "Aevum" as CityName, new Map<CorpEmployeePosition, number>([['Operations' as CorpEmployeePosition, multiplier + 10], ['Engineer' as CorpEmployeePosition, multiplier + 10], ['Business' as CorpEmployeePosition, multiplier + 10], ['Management' as CorpEmployeePosition, multiplier + 10], ['Research & Development' as CorpEmployeePosition, multiplier + 10], ['Intern' as CorpEmployeePosition, multiplier + 10]]));
+
+    all_hire = all_hire && aevum_hire;
+    if (verbose) { log(ns, state, `about to hire all`); await ns.sleep(0); }
+    all_hire = all_hire && hire_up_to(ns, state, 'Tobacco' as CityName, new Map<CorpEmployeePosition, number>([['Operations' as CorpEmployeePosition, multiplier], ['Engineer' as CorpEmployeePosition, multiplier], ['Business' as CorpEmployeePosition, multiplier], ['Management' as CorpEmployeePosition, Math.ceil(multiplier / 2)], ['Research & Development' as CorpEmployeePosition, multiplier], ['Intern' as CorpEmployeePosition, multiplier]]));
+
+    if (verbose) { log(ns, state, `about to upgrade`); await ns.sleep(0); }
+    ['FocusWires', 'Neural Accelerators', 'Speech Processor Implants', 'Nuoptimal Nootropic Injector Implants'].forEach(upgrade => upgrades = upgrades && upgrade_up_to(ns, state, upgrade as CorpUpgradeName, multiplier));
+    ['Smart Factories', 'Project Insight', 'Smart Storage', 'ABC SalesBots'].forEach(upgrade => secondary_upgrades = secondary_upgrades && upgrade_up_to(ns, state, upgrade as CorpUpgradeName, multiplier / 2));
+
+    if (verbose) { log(ns, state, `about to dreamsense`); await ns.sleep(0); }
+    dreamsense = dreamsense && upgrade_up_to(ns, state, 'DreamSense', multiplier / 2);
+    if (verbose) { log(ns, state, `loop iteration done`); await ns.sleep(0); }
+    log(ns, state, `Tobacco loop @ ${multiplier} done, Wilson: ${wilson}, goods: ${goods}, aevum_hire: ${aevum_hire} all_hire: ${all_hire}, upgrades: ${upgrades}, secondary_upgrades: ${secondary_upgrades}, dreamsense: ${dreamsense}`);
+    await ns.sleep(10);
+  }
+
+  if (!ns.corporation.getCorporation().public) {
+    if (ns.corporation.goPublic(0)) {
+      ns.corporation.issueDividends(0.1);
+    } else {
+      log(ns, state, "Failed to go public");
+    }
+  }
 }
+
